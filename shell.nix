@@ -11,6 +11,7 @@ in pkgs.mkShell {
     pkgs.which
     pkgs.wget
     pkgs.cudaPackages.cudatoolkit
+    pkgs.anki
     
     # Ollama built with CUDA support for NixOS
     (pkgs.ollama.override { acceleration = "cuda"; })

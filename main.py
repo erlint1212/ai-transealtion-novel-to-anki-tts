@@ -4,6 +4,8 @@ import random
 import os
 import json
 import logging
+import time
+import re
 from pathlib import Path
 from dataclasses import dataclass
 from typing import List, Optional, Dict
@@ -42,7 +44,6 @@ my_model = genanki.Model(
     css='.card { font-family: arial; font-size: 20px; text-align: center; color: black; background-color: white; }'
 )
 
-# --- DATACLASSES ---
 @dataclass
 class Chapter:
     novel_name: str
@@ -52,42 +53,77 @@ class Chapter:
 
 # --- SPECIALIZED MICRO-PROMPTS ---
 
+def prompt_json():
+    return f"""You are a precise data extraction AI. Extract ALL proper nouns (Characters, Places, Clans) from the text.
+
+RULES:
+1. Output ONLY a valid JSON object. Do not include markdown block ticks.
+2. 'pinyin' MUST include tone marks (e.g., "Wénní").
+3. 'english_name' MUST be a natural English translation or phonetic equivalent (e.g., "Vinnie").
+4. 'pronoun' MUST be in the format "he/him", "she/her", "it/its", or "they/them" based on context.
+
+EXAMPLE INPUT:
+文尼在奥兰迪亚遇到了艾茜菲丝。
+
+EXAMPLE JSON OUTPUT:
+{{
+  "characters": {{
+    "文尼": {{
+      "pinyin": "Wénní",
+      "english_name": "Vinnie",
+      "pronoun": "he/him"
+    }},
+    "艾茜菲丝": {{
+      "pinyin": "Àiqīfēisī",
+      "english_name": "Acephice",
+      "pronoun": "she/her"
+    }}
+  }},
+  "places": {{
+    "奥兰迪亚": {{
+      "pinyin": "Àolándìyà",
+      "english_name": "Orlandia"
+    }}
+  }}
+}}
+
+Now process the user text."""
+
 def prompt_natural(glossary: Dict):
-    return f"""Translate the Chinese text to natural {TARGET_LANGUAGE} line-by-line.
-Convert imperial to metric. 
-Use the 'english_name' from this glossary for characters/places: {json.dumps(glossary, ensure_ascii=False)}
-DO NOT output anything else. Just the line-by-line translation."""
+    return f"""Translate the NUMBERED Chinese lines to natural {TARGET_LANGUAGE}.
+Convert imperial to metric. Use names from this glossary: {json.dumps(glossary, ensure_ascii=False)}
+You MUST output the exact same number of lines. Start each line with its number (e.g., "1. ")."""
 
 def prompt_literal():
-    return """Translate the Chinese text to EXTREMELY LITERAL word-for-word English line-by-line. 
-Preserve the Chinese grammatical structure even if it sounds robotic in English.
-DO NOT output anything else. Just the line-by-line literal translation."""
+    return """Translate the NUMBERED Chinese lines to EXTREMELY LITERAL word-for-word English.
+Preserve Chinese grammar. 
+You MUST output the exact same number of lines. Start each line with its number (e.g., "1. ")."""
 
 def prompt_pinyin():
-    return """Transliterate the Chinese text into Pinyin with tone marks line-by-line.
-DO NOT translate. DO NOT output Chinese characters. Just the Pinyin."""
-
-def prompt_json(glossary: Dict):
-    return f"""Extract ALL proper nouns (Characters and Places) from the text.
-Compare against this existing glossary: {json.dumps(glossary, ensure_ascii=False)}
-Output ONLY a JSON object containing NEW entities NOT in the glossary.
-Format: {{"characters": {{"Name": {{"pinyin": "", "english_name": "", "pronoun": ""}}}}, "places": {{"Name": {{"pinyin": "", "english_name": ""}}}}}}
-Do not include markdown blocks, just the raw JSON."""
+    return """Transliterate the NUMBERED Chinese lines into Pinyin with tone marks.
+You MUST output the exact same number of lines. Start each line with its number (e.g., "1. ")."""
 
 # --- HELPER FUNCTIONS ---
-def chunk_text(text, max_chars=400):
-    lines = text.splitlines()
-    chunks, current_chunk = [], []
+def chunk_text_into_numbered_lines(text, max_chars=400):
+    raw_lines = [line.strip() for line in text.splitlines() if line.strip()]
+    chunks = []
+    current_chunk = {}
     current_length = 0
-    for line in lines:
-        line = line.strip()
-        if not line: continue
+    line_idx = 1
+    
+    for line in raw_lines:
         if current_length + len(line) > max_chars and current_chunk:
-            chunks.append("\n".join(current_chunk))
-            current_chunk, current_length = [], 0
-        current_chunk.append(line)
+            chunks.append(current_chunk)
+            current_chunk = {}
+            current_length = 0
+            line_idx = 1
+            
+        current_chunk[line_idx] = line
         current_length += len(line)
-    if current_chunk: chunks.append("\n".join(current_chunk))
+        line_idx += 1
+        
+    if current_chunk:
+        chunks.append(current_chunk)
     return chunks
 
 def extract_chapter_number(file_name: str) -> Optional[int]:
@@ -95,12 +131,23 @@ def extract_chapter_number(file_name: str) -> Optional[int]:
     except: return None
 
 def call_llm(system_prompt, user_text):
-    """Generic function to call Ollama."""
     response = ollama.chat(model=MODEL_NAME, messages=[
         {'role': 'system', 'content': system_prompt},
         {'role': 'user', 'content': user_text}
     ])
     return response['message']['content'].strip()
+
+def parse_numbered_output(llm_output, expected_count):
+    results = {i: "" for i in range(1, expected_count + 1)}
+    pattern = re.compile(r'^(\d+)[\.\:]\s*(.*)')
+    for line in llm_output.splitlines():
+        match = pattern.match(line.strip())
+        if match:
+            idx = int(match.group(1))
+            content = match.group(2).strip()
+            if 1 <= idx <= expected_count:
+                results[idx] = content
+    return results
 
 # --- MAIN ENGINE ---
 def process_novel(novel_dir: Path):
@@ -124,6 +171,7 @@ def process_novel(novel_dir: Path):
         .py { font-size: 1em; color: #555; margin: 0; font-family: monospace; }
         .lit { font-size: 1em; font-style: italic; color: #666; margin: 0; }
         .en { font-size: 1.1em; font-weight: bold; color: #1a1a1a; margin: 0; }
+        h1 { text-align: center; margin-bottom: 30px; font-size: 2em; }
     """)
     book.add_item(epub_css)
 
@@ -134,56 +182,80 @@ def process_novel(novel_dir: Path):
 
     for chapter in chapters:
         console.print(f"\n[bold]Processing Chapter: {chapter.file_name}[/bold]")
-        chunks = chunk_text(chapter.content)
+        chunks = chunk_text_into_numbered_lines(chapter.content)
         
         full_translated_text = ""
-        epub_chapter_html = f"<h1>{chapter.file_name}</h1>"
+        epub_body_html = ""
+        chapter_title_en = chapter.file_name  # Fallback title
         cards_added_in_chapter = 0
         
-        for i, chunk in enumerate(chunks):
-            chunk_lines = chunk.split('\n')
+        for i, chunk_dict in enumerate(chunks):
+            chunk_size = len(chunk_dict)
+            chunk_start_time = time.time()
+            numbered_input = "\n".join([f"{idx}. {text}" for idx, text in chunk_dict.items()])
             
-            with Progress(SpinnerColumn(), TextColumn(f"[blue]Running 4-Pass Pipeline on chunk {i+1}/{len(chunks)}..."), transient=True) as progress:
+            with Progress(SpinnerColumn(), TextColumn(f"[blue]Processing Chunk {i+1}/{len(chunks)} ({chunk_size} lines)..."), transient=True) as progress:
                 progress.add_task("translating", total=None)
                 
-                # --- PASS 1: Natural English ---
-                res_nat = call_llm(prompt_natural(glossary), chunk).split('\n')
+                # --- PASS 1: JSON Extraction (Pure Extraction) ---
+                t0 = time.time()
+                res_json = call_llm(prompt_json(), numbered_input) # Removed glossary from prompt
+                time_json = time.time() - t0
                 
-                # --- PASS 2: Literal English ---
-                res_lit = call_llm(prompt_literal(), chunk).split('\n')
-                
-                # --- PASS 3: Pinyin ---
-                res_py = call_llm(prompt_pinyin(), chunk).split('\n')
-                
-                # --- PASS 4: JSON Extraction ---
-                res_json = call_llm(prompt_json(glossary), chunk)
+                # --- PYTHON MERGE LOGIC ---
+                try:
+                    json_str = res_json[res_json.find('{'):res_json.rfind('}')+1]
+                    new_entities = json.loads(json_str)
+                    
+                    # Merge Characters: Only add if the key doesn't already exist
+                    for char_name, char_data in new_entities.get("characters", {}).items():
+                        if char_name not in glossary["characters"]:
+                            glossary["characters"][char_name] = char_data
+                            
+                    # Merge Places: Only add if the key doesn't already exist
+                    for place_name, place_data in new_entities.get("places", {}).items():
+                        if place_name not in glossary["places"]:
+                            glossary["places"][place_name] = place_data
+                            
+                except Exception:
+                    pass
 
-            # Update Glossary from Pass 4
-            try:
-                json_str = res_json[res_json.find('{'):res_json.rfind('}')+1]
-                new_data = json.loads(json_str)
-                glossary["characters"].update(new_data.get("characters", {}))
-                glossary["places"].update(new_data.get("places", {}))
-            except Exception as e:
-                logging.warning(f"JSON Parse Error in Chunk {i+1}: {e} - AI Output: {res_json}")
+                # --- PASS 2: Natural English (Passes the updated glossary) ---
+                t1 = time.time()
+                res_nat_raw = call_llm(prompt_natural(glossary), numbered_input)
+                nat_dict = parse_numbered_output(res_nat_raw, chunk_size)
+                time_nat = time.time() - t1
+                
+                # --- PASS 3: Literal English ---
+                t2 = time.time()
+                res_lit_raw = call_llm(prompt_literal(), numbered_input)
+                lit_dict = parse_numbered_output(res_lit_raw, chunk_size)
+                time_lit = time.time() - t2
+                
+                # --- PASS 4: Pinyin ---
+                t3 = time.time()
+                res_py_raw = call_llm(prompt_pinyin(), numbered_input)
+                py_dict = parse_numbered_output(res_py_raw, chunk_size)
+                time_py = time.time() - t3
 
-            # Merge the lines from Passes 1, 2, and 3
-            # We use zip to align the lines. If the AI hallucinates and returns different line counts, zip() stops at the shortest.
+            # COMBINE DATA
             cards_in_chunk = 0
-            for cn, nat, lit, py in zip(chunk_lines, res_nat, res_lit, res_py):
-                # Clean up any potential markdown bullets the AI added
-                nat = nat.lstrip('- *').strip()
-                lit = lit.lstrip('- *').strip()
-                py = py.lstrip('- *').strip()
+            for idx in range(1, chunk_size + 1):
+                cn = chunk_dict[idx]
+                nat = nat_dict[idx]
+                lit = lit_dict[idx]
+                py = py_dict[idx]
+
+                if i == 0 and idx == 1:
+                    chapter_title_en = nat 
+                    epub_body_html += f"<h1>{nat}</h1>\n"
 
                 full_translated_text += nat + "\n"
 
-                # Add to Anki
                 note = genanki.Note(model=my_model, fields=[cn, py, lit, nat], tags=[novel_name, f"Ch_{chapter.chapter_number}"])
                 my_deck.add_note(note)
                 
-                # Add to EPUB HTML
-                epub_chapter_html += f"""
+                epub_body_html += f"""
                 <div class="study-block">
                     <p class="cn">{cn}</p>
                     <p class="py">{py}</p>
@@ -194,28 +266,23 @@ def process_novel(novel_dir: Path):
                 cards_in_chunk += 1
                 cards_added_in_chapter += 1
 
-            console.print(f"[dim]Chunk {i+1}: Combined {cards_in_chunk} lines successfully.[/dim]")
+            chunk_total_time = time.time() - chunk_start_time
+            console.print(f"[dim]Chunk {i+1} done in {chunk_total_time:.1f}s -> Mapped {cards_in_chunk}/{chunk_size} lines.[/dim]")
 
-        console.print(f"[green]✓ Chapter {chapter.file_name} complete. Total cards: {cards_added_in_chapter}[/green]")
+        console.print(f"[green]✓ Chapter complete: '{chapter_title_en}' ({cards_added_in_chapter} cards)[/green]")
 
-        # Save Translated Text File
         (trans_dir / chapter.file_name).write_text(full_translated_text, encoding='utf-8')
         
-        # Add Chapter to EPUB
-        epub_ch = epub.EpubHtml(title=chapter.file_name, file_name=f"{chapter.file_name}.xhtml", lang='en')
-        epub_ch.content = f"<html><head><link rel='stylesheet' href='style/nav.css' type='text/css'/></head><body>{epub_chapter_html}</body></html>"
+        epub_ch = epub.EpubHtml(title=chapter_title_en, file_name=f"{chapter.file_name}.xhtml", lang='en')
+        epub_ch.content = f"<html><head><link rel='stylesheet' href='style/nav.css' type='text/css'/></head><body>{epub_body_html}</body></html>"
         epub_ch.add_item(epub_css)
         book.add_item(epub_ch)
         book_chapters.append(epub_ch)
 
-    # Save Glossary
+    # Save glossary to disk at the end of the chapter
     glossary_file.write_text(json.dumps(glossary, ensure_ascii=False, indent=4), encoding='utf-8')
-
-    # Export Anki
-    anki_path = novel_dir / f"{novel_name}.apkg"
-    genanki.Package(my_deck).write_to_file(str(anki_path))
+    genanki.Package(my_deck).write_to_file(str(novel_dir / f"{novel_name}.apkg"))
     
-    # Export EPUB
     book.toc = book_chapters
     book.add_item(epub.EpubNcx()); book.add_item(epub.EpubNav())
     book.spine = ['nav'] + book_chapters
