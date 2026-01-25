@@ -3,3 +3,5 @@ ollama.log
 parser.log
 Novels/
 *.apkg
+Qwen3-TTS/
+backup/

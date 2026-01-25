@@ -1,0 +1,66 @@
+import re
+import ollama
+from dataclasses import dataclass
+from typing import Optional, Dict, List
+from config import LLM_MODEL
+
+@dataclass
+class Chapter:
+    novel_name: str
+    file_name: str
+    content: str
+    chapter_number: Optional[int] = None
+
+def extract_chapter_number(file_name: str) -> Optional[int]:
+    try: return int(file_name.split('.')[0].split('_')[1])
+    except: return None
+
+def chunk_text_into_numbered_lines(text: str, max_chars=400) -> List[Dict[int, str]]:
+    raw_lines = [line.strip() for line in text.splitlines() if line.strip()]
+    chunks, current_chunk = [], {}
+    current_length, line_idx = 0, 1
+    for line in raw_lines:
+        if current_length + len(line) > max_chars and current_chunk:
+            chunks.append(current_chunk)
+            current_chunk, current_length, line_idx = {}, 0, 1
+        current_chunk[line_idx] = line
+        current_length += len(line)
+        line_idx += 1
+    if current_chunk: chunks.append(current_chunk)
+    return chunks
+
+def get_relevant_glossary(text: str, master_glossary: Dict) -> Dict:
+    """Scans the text for keys in the master glossary and returns only the matches."""
+    relevant_glossary = {"characters": {}, "places": {}}
+    for c_name, c_data in master_glossary.get("characters", {}).items():
+        if c_name in text: relevant_glossary["characters"][c_name] = c_data
+    for p_name, p_data in master_glossary.get("places", {}).items():
+        if p_name in text: relevant_glossary["places"][p_name] = p_data
+    return {k: v for k, v in relevant_glossary.items() if v}
+
+def call_llm(system_prompt: str, user_text: str) -> str:
+    response = ollama.chat(model=LLM_MODEL, messages=[
+        {'role': 'system', 'content': system_prompt},
+        {'role': 'user', 'content': user_text}
+    ])
+    return response['message']['content'].strip()
+
+def parse_numbered_output(llm_output: str, expected_count: int) -> Dict[int, str]:
+    results = {i: "" for i in range(1, expected_count + 1)}
+    pattern = re.compile(r'^(\d+)[\.\:]\s*(.*)')
+    for line in llm_output.splitlines():
+        match = pattern.match(line.strip())
+        if match:
+            idx = int(match.group(1))
+            if 1 <= idx <= expected_count: results[idx] = match.group(2).strip()
+    return results
+
+def clean_for_tts(text: str) -> str:
+    """Sanitizes text to prevent TTS hallucinations on short/mixed-language lines."""
+    text = re.sub(r'^(?i)(chapter|ch\.?)\s*\d+\s*[-—:]?\s*', '', text)
+    text = re.sub(r'[“”（）《》【】\-—]', '', text)
+    text = re.sub(r'？+', '？', text)
+    text = re.sub(r'！+', '！', text)
+    text = re.sub(r'…+', '…', text)
+    text = re.sub(r'\.+', '.', text)
+    return text.strip()
