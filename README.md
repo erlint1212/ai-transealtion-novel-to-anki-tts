@@ -1,4 +1,4 @@
-# 📚 NixOS AI: Novel to Anki & Audiobook Generator
+# 📚 Novel to Anki & Audiobook Generator
 
 An automated, locally-hosted AI pipeline that transforms raw Chinese web novels into rich, multimedia flashcards and immersive EPUB audiobooks. 
 
