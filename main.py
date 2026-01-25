@@ -86,6 +86,9 @@ def process_novel(novel_dir):
     # --- STAGE 2: QWEN3-TTS AUDIO GENERATION ---
     console.print(f"\n[bold magenta]=== STAGE 2: AUDIO GENERATION ===[/bold magenta]")
     
+    # Import Exporter specifically for EPUB Audio
+    from exporters import create_epub_audio_item 
+    
     from qwen_tts import Qwen3TTSModel
     tts_model = Qwen3TTSModel.from_pretrained(TTS_MODEL, device_map="cuda:0", dtype=torch.bfloat16, attn_implementation="flash_attention_2")
 
@@ -96,6 +99,7 @@ def process_novel(novel_dir):
         
         full_translated_text = ""
         epub_body_html = f"<h1>{chapter_title_en}</h1>\n"
+        epub_audio_items = [] # Track audio items for this specific EPUB chapter
         
         with Progress(SpinnerColumn(), TextColumn(f"[cyan]Generating audio for {chapter.file_name}..."), transient=True) as progress:
             progress.add_task("tts", total=None)
@@ -107,7 +111,14 @@ def process_novel(novel_dir):
                 
                 wavs, sr = tts_model.generate_custom_voice(text=tts_text, language="Chinese", speaker=SPEAKER_VOICE)
                 sf.write(str(audio_filepath), wavs[0], sr)
+                
+                # Register for Anki
                 media_files_for_anki.append(str(audio_filepath))
+
+                # Register for EPUB
+                epub_audio = create_epub_audio_item(str(audio_filepath), audio_filename)
+                book.add_item(epub_audio)
+                epub_audio_items.append(epub_audio)
 
                 # 2. Add to Anki
                 note = genanki.Note(
@@ -117,9 +128,20 @@ def process_novel(novel_dir):
                 )
                 my_deck.add_note(note)
 
-                # 3. Add to Text/EPUB
+                # 3. Add to Text/EPUB (Now with HTML5 Audio Tag)
                 full_translated_text += line["nat"] + "\n"
-                epub_body_html += f"""<div class="study-block"><p class="cn">{line["cn"]}</p><p class="py">{line["py"]}</p><p class="lit">"{line["lit"]}"</p><p class="en">{line["nat"]}</p></div>"""
+                epub_body_html += f"""
+                <div class="study-block">
+                    <p class="cn">{line["cn"]}</p>
+                    <p class="py">{line["py"]}</p>
+                    <p class="lit">"{line["lit"]}"</p>
+                    <p class="en">{line["nat"]}</p>
+                    <audio controls preload="none">
+                        <source src="media/{audio_filename}" type="audio/wav">
+                        Your browser does not support the audio element.
+                    </audio>
+                </div>
+                """
 
         # Save files per chapter
         (trans_dir / chapter.file_name).write_text(full_translated_text, encoding='utf-8')
