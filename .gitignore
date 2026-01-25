@@ -1,4 +1,5 @@
 .venv/
 ollama.log
+parser.log
 Novels/
 *.apkg
