@@ -1,3 +1,4 @@
+from pathlib import Path
 from ebooklib import epub
 import os
 
@@ -12,8 +13,8 @@ def get_epub_css() -> epub.EpubItem:
         audio { width: 100%; height: 35px; margin-top: 10px; }
     """)
 
-def create_epub_audio_item(audio_filepath: str, filename: str) -> epub.EpubItem:
-    """Creates an EPUB audio item from a local file."""
+def create_epub_audio_item(audio_filepath: Path, filename: str) -> epub.EpubItem:
+    """Loads a WAV file from the disk into the EPUB manifest."""
     with open(audio_filepath, 'rb') as f:
         audio_content = f.read()
     return epub.EpubItem(
@@ -23,8 +24,42 @@ def create_epub_audio_item(audio_filepath: str, filename: str) -> epub.EpubItem:
         content=audio_content
     )
 
-def create_epub_chapter(title: str, file_name: str, body_html: str, stylesheet: epub.EpubItem) -> epub.EpubHtml:
-    ch = epub.EpubHtml(title=title, file_name=f"{file_name}.xhtml", lang='en')
-    ch.content = f"<html><head><link rel='stylesheet' href='style/nav.css' type='text/css'/></head><body>{body_html}</body></html>"
-    ch.add_item(stylesheet)
-    return ch
+def build_final_epub(novel_name: str, novel_dir: Path):
+    """Compiles individual .xhtml chapters and .wav media into the final .epub."""
+    book = epub.EpubBook()
+    book.set_title(novel_name)
+    book.set_language('en')
+
+    epub_css = get_epub_css()
+    book.add_item(epub_css)
+
+    epub_dir = novel_dir / "03_EPUB_Chapters"
+    media_dir = novel_dir / "media"
+    
+    book_chapters = []
+    
+    # 1. Load and stitch all the XHTML Chapters in order
+    for xhtml_file in sorted(epub_dir.glob("*.xhtml")):
+        content = xhtml_file.read_text(encoding='utf-8')
+        
+        # Extract the English chapter title from the <h1> tag
+        title_match = content.split("<h1>")[1].split("</h1>")[0] if "<h1>" in content else xhtml_file.stem
+
+        ch = epub.EpubHtml(title=title_match, file_name=xhtml_file.name, lang='en')
+        ch.content = content
+        ch.add_item(epub_css)
+        book.add_item(ch)
+        book_chapters.append(ch)
+
+    # 2. Embed all audio files into the EPUB container
+    for audio_file in media_dir.glob("*.wav"):
+        audio_item = create_epub_audio_item(audio_file, audio_file.name)
+        book.add_item(audio_item)
+
+    # 3. Finalize Book Structure
+    book.toc = book_chapters
+    book.add_item(epub.EpubNcx())
+    book.add_item(epub.EpubNav())
+    book.spine = ['nav'] + book_chapters
+    
+    epub.write_epub(str(novel_dir / f"{novel_name}.epub"), book)
