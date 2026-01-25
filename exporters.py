@@ -13,23 +13,43 @@ def get_epub_css() -> epub.EpubItem:
         audio { width: 100%; height: 35px; margin-top: 10px; }
     """)
 
-def create_epub_audio_item(audio_filepath: Path, filename: str) -> epub.EpubItem:
-    """Loads a WAV file from the disk into the EPUB manifest."""
+def create_epub_audio_item(audio_filepath: Path, base_novel_dir: Path) -> epub.EpubItem:
     with open(audio_filepath, 'rb') as f:
         audio_content = f.read()
+    
+    rel_path = audio_filepath.relative_to(base_novel_dir)
     return epub.EpubItem(
-        uid=f"audio_{filename}", 
-        file_name=f"media/{filename}", 
-        media_type="audio/wav", 
+        uid=f"audio_{audio_filepath.stem}", 
+        file_name=str(rel_path.as_posix()), 
+        media_type="audio/ogg", 
         content=audio_content
     )
 
-def build_final_epub(novel_name: str, novel_dir: Path):
-    """Compiles individual .xhtml chapters and .wav media into the final .epub."""
+def build_final_epub(novel_name: str, novel_dir: Path, metadata: dict):
+    """Compiles the EPUB using standard text, audio, and custom metadata."""
     book = epub.EpubBook()
-    book.set_title(novel_name)
-    book.set_language('en')
 
+    # --- 1. APPLY METADATA ---
+    book_title = metadata.get("title", novel_name)
+    book.set_title(book_title)
+    book.set_language(metadata.get("language", "en"))
+    book.add_author(metadata.get("author", "Unknown Author"))
+    
+    description = metadata.get("description", "")
+    if description:
+        book.add_metadata('DC', 'description', description)
+
+    # --- 2. APPLY COVER IMAGE ---
+    cover_filename = metadata.get("cover_image", "")
+    if cover_filename:
+        cover_path = novel_dir / cover_filename
+        if cover_path.exists():
+            with open(cover_path, 'rb') as cover_file:
+                book.set_cover("cover.jpg", cover_file.read())
+        else:
+            print(f"[Warning] Cover image '{cover_filename}' not found at {cover_path}.")
+
+    # --- 3. BUILD BOOK STRUCTURE ---
     epub_css = get_epub_css()
     book.add_item(epub_css)
 
@@ -38,11 +58,9 @@ def build_final_epub(novel_name: str, novel_dir: Path):
     
     book_chapters = []
     
-    # 1. Load and stitch all the XHTML Chapters in order
+    # Load and stitch XHTML Chapters
     for xhtml_file in sorted(epub_dir.glob("*.xhtml")):
         content = xhtml_file.read_text(encoding='utf-8')
-        
-        # Extract the English chapter title from the <h1> tag
         title_match = content.split("<h1>")[1].split("</h1>")[0] if "<h1>" in content else xhtml_file.stem
 
         ch = epub.EpubHtml(title=title_match, file_name=xhtml_file.name, lang='en')
@@ -51,15 +69,15 @@ def build_final_epub(novel_name: str, novel_dir: Path):
         book.add_item(ch)
         book_chapters.append(ch)
 
-    # 2. Embed all audio files into the EPUB container
-    for audio_file in media_dir.glob("*.wav"):
-        audio_item = create_epub_audio_item(audio_file, audio_file.name)
+    # Embed audio files
+    for audio_file in media_dir.rglob("*.opus"):
+        audio_item = create_epub_audio_item(audio_file, novel_dir)
         book.add_item(audio_item)
 
-    # 3. Finalize Book Structure
+    # Finalize Book
     book.toc = book_chapters
     book.add_item(epub.EpubNcx())
     book.add_item(epub.EpubNav())
     book.spine = ['nav'] + book_chapters
     
-    epub.write_epub(str(novel_dir / f"{novel_name}.epub"), book)
+    epub.write_epub(str(novel_dir / f"{book_title}.epub"), book)

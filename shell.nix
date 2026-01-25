@@ -1,10 +1,15 @@
-# shell.nix for Qwen2.5-14B (LLM) + Qwen3-TTS (Source) + Anki Generator
+# shell.nix for Qwen2.5-14B (LLM) + Qwen3-TTS (Source) + Anki Generator GUI
 let
   pkgs = import <nixpkgs> { config.allowUnfree = true; };
   ccLib = pkgs.stdenv.cc.cc;
+
 in pkgs.mkShell {
   packages = [
-    pkgs.python310
+    # 1. Use the standard pre-compiled Python 3.10
+    pkgs.python310 
+    # 2. Add Tkinter as a separate pre-compiled package
+    pkgs.python310Packages.tkinter 
+    
     pkgs.uv
     pkgs.gcc
     pkgs.git
@@ -12,25 +17,26 @@ in pkgs.mkShell {
     pkgs.libsndfile
     pkgs.sox
     pkgs.zlib
+    pkgs.tk 
+    pkgs.xorg.libX11 
     pkgs.cudaPackages.cudatoolkit
     (pkgs.ollama.override { acceleration = "cuda"; })
     ccLib
   ];
 
   shellHook = ''
-    export LD_LIBRARY_PATH=/run/opengl-driver/lib:${ccLib.lib}/lib:${pkgs.libsndfile.out}/lib:${pkgs.zlib}/lib:${pkgs.cudaPackages.cudatoolkit}/lib${":$LD_LIBRARY_PATH"}
+    export LD_LIBRARY_PATH=/run/opengl-driver/lib:${ccLib.lib}/lib:${pkgs.libsndfile.out}/lib:${pkgs.zlib}/lib:${pkgs.cudaPackages.cudatoolkit}/lib:${pkgs.tk}/lib${":$LD_LIBRARY_PATH"}
 
-    # 1. Start Ollama
     if ! pgrep -x "ollama" > /dev/null; then
         echo "Starting Ollama server..."
         ollama serve > ollama.log 2>&1 &
         sleep 2
     fi
 
-    # 2. Setup Python & Qwen3-TTS from Source
     if [ ! -d ".venv" ]; then
         echo "Creating Python 3.10 virtual environment..."
-        uv venv --python 3.10
+        # Using standard python3.10 here since Tkinter is in the system path
+        uv venv --python ${pkgs.python310}/bin/python 
         source .venv/bin/activate
         
         echo "1/5 Installing PyTorch with CUDA 12.4..."
@@ -49,13 +55,13 @@ in pkgs.mkShell {
         uv pip install -e .
         cd ..
 
-        echo "5/5 Installing Anki & Audio dependencies..."
-        uv pip install ollama genanki rich ebooklib soundfile pydub
+        echo "5/5 Installing GUI & Anki dependencies..."
+        uv pip install ollama genanki rich ebooklib soundfile pydub customtkinter pillow
     else
         source .venv/bin/activate
     fi
 
-    export PS1="\n\[\033[1;36m\][Qwen_Ultimate_Env:\w]\$\[\033[0m\] "
-    echo "Environment ready for LLM Translation + Native Qwen3-TTS Generation!"
+    export PS1="\n\[\033[1;36m\][Qwen_GUI_Env:\w]\$\[\033[0m\] "
+    echo "Environment ready! Run 'python gui.py' to launch the app."
   '';
 }
