@@ -43,8 +43,8 @@ Requires [Miniconda](https://docs.anaconda.com/free/miniconda/index.html) or Nix
 
 ```bash
 # Clone the repository
-git clone [https://github.com/your-username/nixos-ai-novel-generator.git](https://github.com/your-username/nixos-ai-novel-generator.git)
-cd nixos-ai-novel-generator
+git clone git@github.com:erlint1212/ai-transealtion-novel-to-anki-tts.git
+cd ai-transealtion-novel-to-anki-tts
 
 # Create the environment with all system dependencies (FFmpeg, CUDA, Tkinter)
 conda env create -f environment.yml
