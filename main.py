@@ -113,17 +113,36 @@ def process_novel(novel_dir, start_chapter: int, stop_event: threading.Event):
                 print(f"    - Chunk {i+1}/{len(chunks)} ({chunk_size} lines): Sending to LLM...")
                 numbered_input = "\n".join([f"{idx}. {text}" for idx, text in chunk_dict.items()])
                 
-                # Update Glossary
+                # Update Glossary (Optimized: Only writes to disk if changes occurred)
                 try:
                     res_json = call_llm(prompt_json(), numbered_input)
+                    # Extract JSON string safely
                     json_str = res_json[res_json.find('{'):res_json.rfind('}')+1]
                     new_entities = json.loads(json_str)
+                    
+                    glossary_changed = False # <--- Flag to track updates
+
                     for c_name, c_data in new_entities.get("characters", {}).items():
-                        if c_name not in glossary["characters"]: glossary["characters"][c_name] = c_data
+                        # STRICT CHECK: Only add if the key does NOT exist
+                        if c_name not in glossary["characters"]: 
+                            glossary["characters"][c_name] = c_data
+                            glossary_changed = True
+                            print(f"    [Glossary] Discovered new character: {c_name}")
+
                     for p_name, p_data in new_entities.get("places", {}).items():
-                        if p_name not in glossary["places"]: glossary["places"][p_name] = p_data
-                    glossary_file.write_text(json.dumps(glossary, ensure_ascii=False, indent=4), encoding='utf-8')
-                except Exception: pass
+                        # STRICT CHECK: Only add if the key does NOT exist
+                        if p_name not in glossary["places"]: 
+                            glossary["places"][p_name] = p_data
+                            glossary_changed = True
+                            print(f"    [Glossary] Discovered new place: {p_name}")
+
+                    # Only write to disk if we actually added something
+                    if glossary_changed:
+                        glossary_file.write_text(json.dumps(glossary, ensure_ascii=False, indent=4), encoding='utf-8')
+                        
+                except Exception as e: 
+                    print(f"[WARNING] Glossary update failed: {e}") 
+                    pass
 
                 # Extract Translations
                 chunk_glossary = get_relevant_glossary(numbered_input, glossary)
