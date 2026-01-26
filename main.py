@@ -35,10 +35,7 @@ def process_novel(novel_dir, start_chapter: int, stop_event: threading.Event):
     deck_id = get_deterministic_id(novel_name)
     my_deck = genanki.Deck(deck_id, f'{novel_name} Vocab & Audio')
     
-    # Pre-load existing media into the master Anki tracker
     media_files_for_anki = []
-    for existing_audio in media_dir.rglob("*.opus"):
-        media_files_for_anki.append(str(existing_audio))
     
     all_raw_files = sorted(raw_dir.glob("*.txt"))
     chapters = []
@@ -49,29 +46,51 @@ def process_novel(novel_dir, start_chapter: int, stop_event: threading.Event):
 
     print(f"Loaded {len(chapters)} chapters for processing.")
 
-    # --- MAIN PROCESSING LOOP (ONE CHAPTER AT A TIME) ---
     for chapter in chapters:
         if stop_event.is_set(): return
 
-        xhtml_filename = chapter.file_name.replace('.txt', '.xhtml')
-        if (epub_dir / xhtml_filename).exists():
-            print(f">>> SKIPPING {chapter.file_name} (Already 100% Complete).")
+        # --- 1. STRICT VERIFICATION CHECK ---
+        chunks = chunk_text_into_numbered_lines(chapter.content)
+        total_chunks = len(chunks)
+        total_lines = sum(len(c) for c in chunks)
+        
+        xhtml_path = epub_dir / chapter.file_name.replace('.txt', '.xhtml')
+        ch_apkg_path = anki_ch_dir / f"Ch_{chapter.chapter_number:03d}.apkg"
+        chapter_media_dir = media_dir / f"ch_{chapter.chapter_number:04d}"
+        chapter_cache_dir = cache_dir / f"ch_{chapter.chapter_number:04d}"
+
+        # Count existing files
+        existing_chunks = len(list(chapter_cache_dir.glob("chunk_*.json"))) if chapter_cache_dir.exists() else 0
+        existing_audio = len(list(chapter_media_dir.glob("*.opus"))) if chapter_media_dir.exists() else 0
+
+        # Verification Logic
+        is_complete = (
+            xhtml_path.exists() and 
+            ch_apkg_path.exists() and 
+            existing_chunks == total_chunks and 
+            existing_audio == total_lines
+        )
+
+        if is_complete:
+            print(f">>> SKIPPING {chapter.file_name} (Verified 100% Complete).")
+            # Register audio for the master compilation
+            for audio_file in chapter_media_dir.glob("*.opus"):
+                if str(audio_file) not in media_files_for_anki:
+                    media_files_for_anki.append(str(audio_file))
             continue
             
-        print(f"\n{'='*50}\n>>> PROCESSING: {chapter.file_name}\n{'='*50}")
+        print(f"\n{'='*50}\n>>> PROCESSING/RESTORING: {chapter.file_name}\n{'='*50}")
         
-        # --- STAGE 1: LLM TRANSLATION ---
+        # --- STAGE 1: TEXT GENERATION (LLM) ---
         print("\n--- STAGE 1: TEXT GENERATION ---")
-        chunks = chunk_text_into_numbered_lines(chapter.content)
         chapter_lines = []
-        chapter_cache_dir = cache_dir / f"ch_{chapter.chapter_number:04d}"
         chapter_cache_dir.mkdir(exist_ok=True)
         
         for i, chunk_dict in enumerate(chunks):
             if stop_event.is_set(): return
             chunk_size = len(chunk_dict)
-            
             chunk_cache_file = chapter_cache_dir / f"chunk_{i:04d}.json"
+            
             if chunk_cache_file.exists():
                 print(f"    - Chunk {i+1}/{len(chunks)}: Loaded from cache.")
                 chapter_lines.extend(json.loads(chunk_cache_file.read_text(encoding='utf-8')))
@@ -80,25 +99,19 @@ def process_novel(novel_dir, start_chapter: int, stop_event: threading.Event):
             print(f"    - Chunk {i+1}/{len(chunks)} ({chunk_size} lines): Sending to LLM...")
             numbered_input = "\n".join([f"{idx}. {text}" for idx, text in chunk_dict.items()])
             
-            t0 = time.time()
-            
-            # 1. Update Glossary
-            res_json = call_llm(prompt_json(), numbered_input)
+            # Update Glossary
             try:
+                res_json = call_llm(prompt_json(), numbered_input)
                 json_str = res_json[res_json.find('{'):res_json.rfind('}')+1]
                 new_entities = json.loads(json_str)
                 for c_name, c_data in new_entities.get("characters", {}).items():
-                    if c_name not in glossary["characters"]: 
-                        print(f"      [Glossary] Found new character: {c_name}")
-                        glossary["characters"][c_name] = c_data
+                    if c_name not in glossary["characters"]: glossary["characters"][c_name] = c_data
                 for p_name, p_data in new_entities.get("places", {}).items():
-                    if p_name not in glossary["places"]: 
-                        print(f"      [Glossary] Found new place: {p_name}")
-                        glossary["places"][p_name] = p_data
+                    if p_name not in glossary["places"]: glossary["places"][p_name] = p_data
                 glossary_file.write_text(json.dumps(glossary, ensure_ascii=False, indent=4), encoding='utf-8')
             except Exception: pass
 
-            # 2. Extract Translations
+            # Extract Translations with Fallbacks
             chunk_glossary = get_relevant_glossary(numbered_input, glossary)
             nat_dict = {idx: "" for idx in range(1, chunk_size + 1)}
             lit_dict = {idx: "" for idx in range(1, chunk_size + 1)}
@@ -106,7 +119,7 @@ def process_novel(novel_dir, start_chapter: int, stop_event: threading.Event):
             emo_dict = {idx: "Calm narrative" for idx in range(1, chunk_size + 1)}
 
             try: nat_dict.update(parse_numbered_output(call_llm(prompt_natural(chunk_glossary), numbered_input), chunk_size))
-            except: print("      [!] Warning: Natural translation failed.")
+            except: pass
             try: lit_dict.update(parse_numbered_output(call_llm(prompt_literal(chunk_glossary), numbered_input), chunk_size))
             except: pass
             try: py_dict.update(parse_numbered_output(call_llm(prompt_pinyin(chunk_glossary), numbered_input), chunk_size))
@@ -136,7 +149,6 @@ def process_novel(novel_dir, start_chapter: int, stop_event: threading.Event):
         tts_model = None
 
         chapter_title_en = chapter_lines[0]["nat"] if chapter_lines else chapter.file_name
-        chapter_media_dir = media_dir / f"ch_{chapter.chapter_number:04d}"
         chapter_media_dir.mkdir(exist_ok=True)
         
         chapter_deck_id = get_deterministic_id(f"{novel_name}_Ch_{chapter.chapter_number}")
@@ -152,31 +164,48 @@ def process_novel(novel_dir, start_chapter: int, stop_event: threading.Event):
             audio_filename = f"ch{chapter.chapter_number:02d}_L{line_idx:04d}.opus"
             audio_filepath = chapter_media_dir / audio_filename
             
-            if not audio_filepath.exists():
+            # --- NEW: STRICT AUDIO VALIDATION ---
+            # Skips only if file exists AND is larger than 1KB (not corrupted)
+            skip_audio = False
+            if audio_filepath.exists():
+                if audio_filepath.stat().st_size > 1024:
+                    skip_audio = True
+                else:
+                    audio_filepath.unlink() # Delete the 0-byte corrupted file
+            
+            if not skip_audio:
                 if tts_model is None:
                     print(f"[SYSTEM] Loading Qwen3-TTS ({TTS_MODEL})...")
-                    tts_model = Qwen3TTSModel.from_pretrained(TTS_MODEL, device_map="cuda:0", dtype=torch.bfloat16, attn_implementation="flash_attention_2")
+                    # FIXED: Using torch_dtype to fix Flash Attention 2 memory leak
+                    tts_model = Qwen3TTSModel.from_pretrained(TTS_MODEL, device_map="cuda:0", torch_dtype=torch.bfloat16, attn_implementation="flash_attention_2")
 
                 raw_text = clean_for_tts(line["cn"]) or "标题"
                 emotion_tag = line.get("emo", "Calm narrative").strip()
-                tts_text_with_emotion = f"({emotion_tag}) {raw_text}"
+                if len(emotion_tag.split()) > 6: emotion_tag = "Calm narrative"
                 
-                print(f"    [Audio] L{line_idx+1}/{len(chapter_lines)}: {tts_text_with_emotion[:40]}...")
-                wavs, sr = tts_model.generate_custom_voice(text=tts_text_with_emotion, language="Chinese", speaker=SPEAKER_VOICE)
-                sf.write(str(audio_filepath), wavs[0], sr, format='OGG', subtype='OPUS')
-
-                # --- NEW: AGGRESSIVE MEMORY CLEANUP ---
-                # Delete the massive audio tensor from VRAM immediately after saving
-                del wavs 
+                print(f"    [Audio] L{line_idx+1}/{len(chapter_lines)}: [{emotion_tag}] {raw_text[:40]}...")
+                
+                with torch.no_grad():
+                    wavs, sr = tts_model.generate_custom_voice(
+                        text=raw_text, 
+                        language="Chinese", 
+                        speaker=SPEAKER_VOICE, 
+                        instruct=f"Read this with the following emotion: {emotion_tag}"
+                    )
+                
+                # --- NEW: Force audio to CPU to free the GPU Bus immediately ---
+                audio_data = wavs[0].cpu().numpy() if torch.is_tensor(wavs[0]) else wavs[0]
+                sf.write(str(audio_filepath), audio_data, sr, format='OGG', subtype='OPUS')
+                
+                # Nuke memory
+                del wavs, audio_data
                 gc.collect()
-                torch.cuda.empty_cache() 
-
-            # Tracking Media
+                torch.cuda.empty_cache()
+            
             chapter_media_files.append(str(audio_filepath))
             if str(audio_filepath) not in media_files_for_anki:
                 media_files_for_anki.append(str(audio_filepath))
 
-            # HTML and Anki Building
             card_guid_string = f"{novel_name}_Ch_{chapter.chapter_number:03d}_L{line_idx:04d}"
             card_guid = genanki.guid_for(card_guid_string)
 
@@ -191,7 +220,7 @@ def process_novel(novel_dir, start_chapter: int, stop_event: threading.Event):
             full_translated_text += line["nat"] + "\n"
             epub_body_html += f"""
             <div class="study-block">
-                <p class="cn">{line["cn"]} <span style="font-size:0.5em; color:#888;">[{line.get('emo', 'Calm')}]</span></p>
+                <p class="cn">{line["cn"]}</p>
                 <p class="py">{line["py"]}</p>
                 <p class="lit">"{line["lit"]}"</p>
                 <p class="en">{line["nat"]}</p>
@@ -199,7 +228,6 @@ def process_novel(novel_dir, start_chapter: int, stop_event: threading.Event):
             </div>
             """
 
-        # --- VRAM BRIDGE: UNLOAD TTS ---
         if tts_model is not None:
             del tts_model
             gc.collect()
@@ -208,19 +236,14 @@ def process_novel(novel_dir, start_chapter: int, stop_event: threading.Event):
         if stop_event.is_set(): return
 
         # --- STAGE 3: CHAPTER WRAP-UP ---
-        # 1. Save Isolated Chapter Deck
-        ch_apkg_path = anki_ch_dir / f"Ch_{chapter.chapter_number:03d}.apkg"
         ch_package = genanki.Package(chapter_deck)
         ch_package.media_files = chapter_media_files
         ch_package.write_to_file(str(ch_apkg_path))
 
-        # 2. Save HTML for the EPUB
         (trans_dir / chapter.file_name).write_text(full_translated_text, encoding='utf-8')
         epub_html_full = f"<html><head><link rel='stylesheet' href='style/nav.css' type='text/css'/></head><body>{epub_body_html}</body></html>"
-        xhtml_filename = chapter.file_name.replace('.txt', '.xhtml')
         (epub_dir / xhtml_filename).write_text(epub_html_full, encoding='utf-8')
         
-        # 3. Compile Master EPUB and Master Anki Deck (Incremental Update)
         print(f"    [Export] Updating Master EPUB and Master Anki Deck...")
         metadata_file = novel_dir / "metadata.json"
         novel_metadata = json.loads(metadata_file.read_text(encoding='utf-8')) if metadata_file.exists() else {}
@@ -228,8 +251,7 @@ def process_novel(novel_dir, start_chapter: int, stop_event: threading.Event):
         
         anki_package = genanki.Package(my_deck)
         anki_package.media_files = media_files_for_anki
-        master_deck_name = novel_metadata.get("title", novel_name) + ".apkg"
-        anki_package.write_to_file(str(novel_dir / master_deck_name))
+        anki_package.write_to_file(str(novel_dir / (novel_metadata.get("title", novel_name) + ".apkg")))
 
         print(f"✓ {chapter.file_name} successfully finished and exported.")
 
