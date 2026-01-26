@@ -18,7 +18,8 @@ Designed for language learners, this tool uses **Local LLMs (Qwen2.5-14B)** and 
 * **📖 Dynamic Glossary Extraction:** The AI acts as a lore-master, tracking characters and locations in a `glossary.json` to ensure translation consistency across hundreds of chapters.
 * **🖥️ Multi-Threaded GUI:** A sleek CustomTkinter interface that prevents system freezing, with live verbose logging and a fail-safe "Terminate" hook.
 * **🎵 Opus Audio Compression:** Squeezes thousands of audio files into OGG/OPUS format, saving up to 90% space with zero loss in vocal fidelity.
-* **📦 Polished Exports:** * **Anki Decks (`.apkg`):** Front/Back cards with native Audio, Pinyin, Literal Translation, and Natural English.
+* **📦 Polished Exports:** 
+  * **Anki Decks (`.apkg`):** Front/Back cards with native Audio, Pinyin, Literal Translation, and Natural English.
   * **E-Books (`.epub`):** Beautifully styled chapters with embedded HTML5 `<audio>` tags for immersive reading.
 
 ---
