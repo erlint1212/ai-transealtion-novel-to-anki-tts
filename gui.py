@@ -31,15 +31,20 @@ class TextRedirector:
         self.original_stream = original_stream
 
     def write(self, text):
-        # 1. Print to the actual Konsole (keeps the pretty colors)
+        # 1. Print to the actual Konsole immediately
         self.original_stream.write(text)
 
         # 2. Strip the ANSI color codes for the GUI
         clean_text = ansi_escape.sub('', text)
 
-        # 3. Print to the GUI Log Window
+        # 3. THREAD SAFE GUI UPDATE: 
+        # Pass the update to the main UI thread using .after()
+        self.text_widget.after(0, self._update_gui, clean_text)
+
+    def _update_gui(self, text):
+        """Helper method that only runs on the Main UI Thread."""
         self.text_widget.configure(state="normal")
-        self.text_widget.insert("end", clean_text)
+        self.text_widget.insert("end", text)
         self.text_widget.see("end")
         self.text_widget.configure(state="disabled")
 

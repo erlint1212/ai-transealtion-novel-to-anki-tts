@@ -64,3 +64,14 @@ def clean_for_tts(text: str) -> str:
     text = re.sub(r'…+', '…', text)
     text = re.sub(r'\.+', '.', text)
     return text.strip()
+
+def sanitize_filename(text: str) -> str:
+    """
+    Converts spaces to underscores and removes illegal file system characters.
+    Ensures compatibility across Windows, macOS, and Linux.
+    """
+    # 1. Replace spaces with underscores
+    safe_text = text.replace(" ", "_")
+    # 2. Remove illegal characters (< > : " / \ | ? *)
+    safe_text = re.sub(r'[<>:"/\\|?*]', '', safe_text)
+    return safe_text

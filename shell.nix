@@ -29,7 +29,7 @@ in pkgs.mkShell {
 
     if ! pgrep -x "ollama" > /dev/null; then
         echo "Starting Ollama server..."
-        ollama serve > ollama.log 2>&1 &
+        ollama serve >| ollama.log 2>&1 &
         sleep 2
     fi
 

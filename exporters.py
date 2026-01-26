@@ -1,14 +1,27 @@
 from pathlib import Path
 from ebooklib import epub
 import os
+from utils import sanitize_filename  
 
 def get_epub_css() -> epub.EpubItem:
     return epub.EpubItem(uid="style_nav", file_name="style/nav.css", media_type="text/css", content="""
-        .study-block { margin-bottom: 20px; padding-bottom: 10px; border-bottom: 1px solid #eee; }
-        .cn { font-size: 1.4em; font-weight: bold; margin: 0; color: #000; }
-        .py { font-size: 1em; color: #555; margin: 0; font-family: monospace; }
-        .lit { font-size: 1em; font-style: italic; color: #666; margin: 0; }
-        .en { font-size: 1.1em; font-weight: bold; color: #1a1a1a; margin: 0; }
+        /* Core Block Styling */
+        .study-block { 
+            margin-bottom: 15px; 
+            padding: 15px; /* Added padding so the background doesn't hug the text */
+            border-radius: 8px; /* Smooth, modern corners */
+            border-bottom: 1px solid rgba(128, 128, 128, 0.15); 
+        }
+
+        /* Zebra Striping (Alternating Colors) */
+        .study-block:nth-child(even) { background-color: transparent; }
+        .study-block:nth-child(odd) { background-color: rgba(128, 128, 128, 0.05); }
+
+        /* Text Styling (Adaptive for Dark Mode) */
+        .cn { font-size: 1.4em; font-weight: bold; margin: 0; }
+        .py { font-size: 1em; margin: 0; font-family: monospace; opacity: 0.8; }
+        .lit { font-size: 1em; font-style: italic; margin: 0; opacity: 0.7; }
+        .en { font-size: 1.1em; font-weight: bold; margin: 0; }
         h1 { text-align: center; margin-bottom: 30px; font-size: 2em; }
         audio { width: 100%; height: 35px; margin-top: 10px; }
     """)
@@ -80,4 +93,6 @@ def build_final_epub(novel_name: str, novel_dir: Path, metadata: dict):
     book.add_item(epub.EpubNav())
     book.spine = ['nav'] + book_chapters
     
-    epub.write_epub(str(novel_dir / f"{book_title}.epub"), book)
+    # --- FIXED: Sanitize the output file name while keeping the pretty book title ---
+    safe_filename = sanitize_filename(book_title)
+    epub.write_epub(str(novel_dir / f"{safe_filename}.epub"), book)

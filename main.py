@@ -10,9 +10,14 @@ import threading
 
 # Local Imports
 from config import LLM_MODEL, TTS_MODEL, SPEAKER_VOICE, NOVELS_ROOT_DIR, ANKI_MODEL, get_deterministic_id
-from utils import Chapter, extract_chapter_number, chunk_text_into_numbered_lines, get_relevant_glossary, call_llm, parse_numbered_output, clean_for_tts
+from utils import Chapter, extract_chapter_number, chunk_text_into_numbered_lines, get_relevant_glossary, call_llm, parse_numbered_output, clean_for_tts, sanitize_filename
 from prompts import prompt_json, prompt_natural, prompt_literal, prompt_pinyin, prompt_emotion
 from exporters import build_final_epub
+
+from qwen_tts import Qwen3TTSModel
+import transformers # NEW: needed to silence warnings
+import numpy as np 
+import re         
 
 def process_novel(novel_dir, start_chapter: int, stop_event: threading.Event):
     novel_name = novel_dir.name
@@ -59,15 +64,16 @@ def process_novel(novel_dir, start_chapter: int, stop_event: threading.Event):
         chapter_media_dir = media_dir / f"ch_{chapter.chapter_number:04d}"
         chapter_cache_dir = cache_dir / f"ch_{chapter.chapter_number:04d}"
 
-        # Count existing files
-        existing_chunks = len(list(chapter_cache_dir.glob("chunk_*.json"))) if chapter_cache_dir.exists() else 0
+        # --- NEW: Define the visible output path for the JSON data ---
+        consolidated_json = trans_dir / chapter.file_name.replace('.txt', '.json')
+
         existing_audio = len(list(chapter_media_dir.glob("*.opus"))) if chapter_media_dir.exists() else 0
 
-        # Verification Logic
+        # Verification Logic (Now checks for the visible JSON file instead of chunks)
         is_complete = (
             xhtml_path.exists() and 
             ch_apkg_path.exists() and 
-            existing_chunks == total_chunks and 
+            consolidated_json.exists() and  # <--- NEW
             existing_audio == total_lines
         )
 
@@ -86,57 +92,71 @@ def process_novel(novel_dir, start_chapter: int, stop_event: threading.Event):
         chapter_lines = []
         chapter_cache_dir.mkdir(exist_ok=True)
         
-        for i, chunk_dict in enumerate(chunks):
-            if stop_event.is_set(): return
-            chunk_size = len(chunk_dict)
-            chunk_cache_file = chapter_cache_dir / f"chunk_{i:04d}.json"
-            
-            if chunk_cache_file.exists():
-                print(f"    - Chunk {i+1}/{len(chunks)}: Loaded from cache.")
-                chapter_lines.extend(json.loads(chunk_cache_file.read_text(encoding='utf-8')))
-                continue
+        # 1. Check if the chapter is already fully translated in the visible folder
+        if consolidated_json.exists():
+            print(f"    - Full chapter loaded from visible directory: {consolidated_json.name}")
+            chapter_lines = json.loads(consolidated_json.read_text(encoding='utf-8'))
+        
+        # 2. If not, process chunks in the hidden cache
+        else:
+            for i, chunk_dict in enumerate(chunks):
+                if stop_event.is_set(): break
+                chunk_size = len(chunk_dict)
+                chunk_cache_file = chapter_cache_dir / f"chunk_{i:04d}.json"
+                
+                if chunk_cache_file.exists():
+                    print(f"    - Chunk {i+1}/{len(chunks)}: Loaded from hidden cache.")
+                    chapter_lines.extend(json.loads(chunk_cache_file.read_text(encoding='utf-8')))
+                    continue
 
-            print(f"    - Chunk {i+1}/{len(chunks)} ({chunk_size} lines): Sending to LLM...")
-            numbered_input = "\n".join([f"{idx}. {text}" for idx, text in chunk_dict.items()])
-            
-            # Update Glossary
-            try:
-                res_json = call_llm(prompt_json(), numbered_input)
-                json_str = res_json[res_json.find('{'):res_json.rfind('}')+1]
-                new_entities = json.loads(json_str)
-                for c_name, c_data in new_entities.get("characters", {}).items():
-                    if c_name not in glossary["characters"]: glossary["characters"][c_name] = c_data
-                for p_name, p_data in new_entities.get("places", {}).items():
-                    if p_name not in glossary["places"]: glossary["places"][p_name] = p_data
-                glossary_file.write_text(json.dumps(glossary, ensure_ascii=False, indent=4), encoding='utf-8')
-            except Exception: pass
+                print(f"    - Chunk {i+1}/{len(chunks)} ({chunk_size} lines): Sending to LLM...")
+                numbered_input = "\n".join([f"{idx}. {text}" for idx, text in chunk_dict.items()])
+                
+                # Update Glossary
+                try:
+                    res_json = call_llm(prompt_json(), numbered_input)
+                    json_str = res_json[res_json.find('{'):res_json.rfind('}')+1]
+                    new_entities = json.loads(json_str)
+                    for c_name, c_data in new_entities.get("characters", {}).items():
+                        if c_name not in glossary["characters"]: glossary["characters"][c_name] = c_data
+                    for p_name, p_data in new_entities.get("places", {}).items():
+                        if p_name not in glossary["places"]: glossary["places"][p_name] = p_data
+                    glossary_file.write_text(json.dumps(glossary, ensure_ascii=False, indent=4), encoding='utf-8')
+                except Exception: pass
 
-            # Extract Translations with Fallbacks
-            chunk_glossary = get_relevant_glossary(numbered_input, glossary)
-            nat_dict = {idx: "" for idx in range(1, chunk_size + 1)}
-            lit_dict = {idx: "" for idx in range(1, chunk_size + 1)}
-            py_dict  = {idx: "" for idx in range(1, chunk_size + 1)}
-            emo_dict = {idx: "Calm narrative" for idx in range(1, chunk_size + 1)}
+                # Extract Translations
+                chunk_glossary = get_relevant_glossary(numbered_input, glossary)
+                nat_dict = {idx: "" for idx in range(1, chunk_size + 1)}
+                lit_dict = {idx: "" for idx in range(1, chunk_size + 1)}
+                py_dict  = {idx: "" for idx in range(1, chunk_size + 1)}
+                emo_dict = {idx: "Calm narrative" for idx in range(1, chunk_size + 1)}
 
-            try: nat_dict.update(parse_numbered_output(call_llm(prompt_natural(chunk_glossary), numbered_input), chunk_size))
-            except: pass
-            try: lit_dict.update(parse_numbered_output(call_llm(prompt_literal(chunk_glossary), numbered_input), chunk_size))
-            except: pass
-            try: py_dict.update(parse_numbered_output(call_llm(prompt_pinyin(chunk_glossary), numbered_input), chunk_size))
-            except: pass
-            try: emo_dict.update(parse_numbered_output(call_llm(prompt_emotion(), numbered_input), chunk_size))
-            except: pass
+                try: nat_dict.update(parse_numbered_output(call_llm(prompt_natural(chunk_glossary), numbered_input), chunk_size))
+                except: pass
+                try: lit_dict.update(parse_numbered_output(call_llm(prompt_literal(chunk_glossary), numbered_input), chunk_size))
+                except: pass
+                try: py_dict.update(parse_numbered_output(call_llm(prompt_pinyin(chunk_glossary), numbered_input), chunk_size))
+                except: pass
+                try: emo_dict.update(parse_numbered_output(call_llm(prompt_emotion(), numbered_input), chunk_size))
+                except: pass
 
-            current_chunk_lines = []
-            for idx in range(1, chunk_size + 1):
-                current_chunk_lines.append({
-                    "cn": chunk_dict[idx], "nat": nat_dict[idx], "lit": lit_dict[idx], "py": py_dict[idx], "emo": emo_dict[idx]
-                })
-            
-            chunk_cache_file.write_text(json.dumps(current_chunk_lines, ensure_ascii=False), encoding='utf-8')
-            chapter_lines.extend(current_chunk_lines)
+                current_chunk_lines = []
+                for idx in range(1, chunk_size + 1):
+                    current_chunk_lines.append({
+                        "cn": chunk_dict[idx], "nat": nat_dict[idx], "lit": lit_dict[idx], "py": py_dict[idx], "emo": emo_dict[idx]
+                    })
+                
+                chunk_cache_file.write_text(json.dumps(current_chunk_lines, ensure_ascii=False), encoding='utf-8')
+                chapter_lines.extend(current_chunk_lines)
 
-        if stop_event.is_set(): return
+            # 3. Consolidation & Cleanup (Moves it to the visible 02_Translated folder)
+            if not stop_event.is_set() and len(chapter_lines) == total_lines:
+                print(f"\n    - Translation complete. Saving master JSON to: 02_Translated/{consolidated_json.name}")
+                consolidated_json.write_text(json.dumps(chapter_lines, ensure_ascii=False, indent=4), encoding='utf-8')
+                
+                print("    - Cleaning up hidden temporary chunks...")
+                for chunk_file in chapter_cache_dir.glob("chunk_*.json"):
+                    chunk_file.unlink()
 
         # --- VRAM BRIDGE: UNLOAD LLM ---
         print("\n[SYSTEM] Unloading LLM to free VRAM for Audio...")
@@ -145,8 +165,11 @@ def process_novel(novel_dir, start_chapter: int, stop_event: threading.Event):
 
         # --- STAGE 2: AUDIO & FILE GENERATION ---
         print("\n--- STAGE 2: AUDIO & COMPILATION ---")
-        from qwen_tts import Qwen3TTSModel
+
+        transformers.logging.set_verbosity_error() 
+
         tts_model = None
+        audio_count = 0 # NEW: Track generations for the reload trigger
 
         chapter_title_en = chapter_lines[0]["nat"] if chapter_lines else chapter.file_name
         chapter_media_dir.mkdir(exist_ok=True)
@@ -164,23 +187,36 @@ def process_novel(novel_dir, start_chapter: int, stop_event: threading.Event):
             audio_filename = f"ch{chapter.chapter_number:02d}_L{line_idx:04d}.opus"
             audio_filepath = chapter_media_dir / audio_filename
             
-            # --- NEW: STRICT AUDIO VALIDATION ---
-            # Skips only if file exists AND is larger than 1KB (not corrupted)
+            # --- STRICT AUDIO VALIDATION ---
             skip_audio = False
             if audio_filepath.exists():
                 if audio_filepath.stat().st_size > 1024:
                     skip_audio = True
                 else:
-                    audio_filepath.unlink() # Delete the 0-byte corrupted file
+                    audio_filepath.unlink() 
             
             if not skip_audio:
+                # --- NEW: AUTO-RELOAD EVERY 30 LINES ---
+                if tts_model is not None and audio_count > 0 and audio_count % 30 == 0:
+                    print(f"[SYSTEM] Auto-reloading TTS model to clear VRAM fragmentation...")
+                    del tts_model
+                    gc.collect()
+                    torch.cuda.empty_cache()
+                    tts_model = None # Force reload below
+
                 if tts_model is None:
                     print(f"[SYSTEM] Loading Qwen3-TTS ({TTS_MODEL})...")
-                    # FIXED: Using torch_dtype to fix Flash Attention 2 memory leak
-                    tts_model = Qwen3TTSModel.from_pretrained(TTS_MODEL, device_map="cuda:0", torch_dtype=torch.bfloat16, attn_implementation="flash_attention_2")
+                    tts_model = Qwen3TTSModel.from_pretrained(
+                        TTS_MODEL, 
+                        device_map="cuda:0", 
+                        dtype=torch.bfloat16, 
+                        attn_implementation="flash_attention_2" 
+                    )
 
                 raw_text = clean_for_tts(line["cn"]) or "标题"
                 emotion_tag = line.get("emo", "Calm narrative").strip()
+                emotion_tag = re.sub(r'[^a-zA-Z0-9\s]', '', emotion_tag).strip()
+
                 if len(emotion_tag.split()) > 6: emotion_tag = "Calm narrative"
                 
                 print(f"    [Audio] L{line_idx+1}/{len(chapter_lines)}: [{emotion_tag}] {raw_text[:40]}...")
@@ -190,18 +226,37 @@ def process_novel(novel_dir, start_chapter: int, stop_event: threading.Event):
                         text=raw_text, 
                         language="Chinese", 
                         speaker=SPEAKER_VOICE, 
-                        instruct=f"Read this with the following emotion: {emotion_tag}"
+                        instruct=f"{emotion_tag}"
                     )
                 
-                # --- NEW: Force audio to CPU to free the GPU Bus immediately ---
-                audio_data = wavs[0].cpu().numpy() if torch.is_tensor(wavs[0]) else wavs[0]
+                # Validation & Deep Copy
+                if torch.is_tensor(wavs[0]):
+                    audio_tensor = wavs[0]
+                    if audio_tensor.numel() == 0 or torch.isnan(audio_tensor).any() or torch.isinf(audio_tensor).any():
+                        print(f"    [!] Corrupted audio detected at L{line_idx+1}. Writing silence.")
+                        audio_data = np.zeros(int(sr * 1.0), dtype=np.float32)
+                    else:
+                        audio_data = (
+                            audio_tensor
+                            .detach()
+                            .cpu()
+                            .to(torch.float32)
+                            .contiguous()
+                            .numpy()
+                            .copy()
+                        )
+                else:
+                    audio_data = np.asarray(wavs[0], dtype=np.float32).copy()
+
                 sf.write(str(audio_filepath), audio_data, sr, format='OGG', subtype='OPUS')
                 
-                # Nuke memory
+                # Nuke memory for this specific loop
                 del wavs, audio_data
                 gc.collect()
                 torch.cuda.empty_cache()
-            
+
+                audio_count += 1 # Increment tracker
+
             chapter_media_files.append(str(audio_filepath))
             if str(audio_filepath) not in media_files_for_anki:
                 media_files_for_anki.append(str(audio_filepath))
@@ -242,16 +297,24 @@ def process_novel(novel_dir, start_chapter: int, stop_event: threading.Event):
 
         (trans_dir / chapter.file_name).write_text(full_translated_text, encoding='utf-8')
         epub_html_full = f"<html><head><link rel='stylesheet' href='style/nav.css' type='text/css'/></head><body>{epub_body_html}</body></html>"
-        (epub_dir / xhtml_filename).write_text(epub_html_full, encoding='utf-8')
+        #(epub_dir / xhtml_filename).write_text(epub_html_full, encoding='utf-8')
+        xhtml_path.write_text(epub_html_full, encoding='utf-8')
         
         print(f"    [Export] Updating Master EPUB and Master Anki Deck...")
         metadata_file = novel_dir / "metadata.json"
         novel_metadata = json.loads(metadata_file.read_text(encoding='utf-8')) if metadata_file.exists() else {}
-        build_final_epub(novel_name, novel_dir, novel_metadata)
         
+        # USE THE NEW UTIL FUNCTION
+        raw_title = novel_metadata.get("title", novel_name)
+        safe_title = sanitize_filename(raw_title)
+
+        # Build EPUB
+        build_final_epub(safe_title, novel_dir, novel_metadata)
+        
+        # Build Anki Package
         anki_package = genanki.Package(my_deck)
         anki_package.media_files = media_files_for_anki
-        anki_package.write_to_file(str(novel_dir / (novel_metadata.get("title", novel_name) + ".apkg")))
+        anki_package.write_to_file(str(novel_dir / (safe_title + ".apkg")))
 
         print(f"✓ {chapter.file_name} successfully finished and exported.")
 

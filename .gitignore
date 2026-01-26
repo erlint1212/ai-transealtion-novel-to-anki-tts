@@ -3,6 +3,7 @@ __pycache__/
 ollama.log
 parser.log
 Novels/
+!Novels/.gitkeep
 *.apkg
 Qwen3-TTS/
 backup/
