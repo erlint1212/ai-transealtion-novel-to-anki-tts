@@ -37,8 +37,9 @@ def process_novel(novel_dir, start_chapter: int, stop_event: threading.Event):
     glossary_file = novel_dir / "glossary.json"
     glossary = json.loads(glossary_file.read_text()) if glossary_file.exists() else {"characters": {}, "places": {}}
 
-    deck_id = get_deterministic_id(novel_name)
-    my_deck = genanki.Deck(deck_id, f'{novel_name} Vocab & Audio')
+    #deck_id = get_deterministic_id(novel_name)
+    #my_deck = genanki.Deck(deck_id, f'{novel_name} Vocab & Audio')
+    all_chapter_decks = []
     
     media_files_for_anki = []
     
@@ -173,9 +174,12 @@ def process_novel(novel_dir, start_chapter: int, stop_event: threading.Event):
 
         chapter_title_en = chapter_lines[0]["nat"] if chapter_lines else chapter.file_name
         chapter_media_dir.mkdir(exist_ok=True)
+
+        safe_deck_title = sanitize_filename(novel_name).replace("_", " ")
         
         chapter_deck_id = get_deterministic_id(f"{novel_name}_Ch_{chapter.chapter_number}")
-        chapter_deck = genanki.Deck(chapter_deck_id, f'{novel_name} - Ch {chapter.chapter_number:03d}')
+        chapter_deck = genanki.Deck(chapter_deck_id, f'{safe_deck_title}::Ch {chapter.chapter_number:03d}')
+        #chapter_deck = genanki.Deck(chapter_deck_id, f'{novel_name} - Ch {chapter.chapter_number:03d}')
         chapter_media_files = [] 
 
         full_translated_text = ""
@@ -269,8 +273,9 @@ def process_novel(novel_dir, start_chapter: int, stop_event: threading.Event):
                 fields=[line["cn"], line["py"], line["lit"], line["nat"], f"[sound:{audio_filename}]"], 
                 tags=[novel_name, f"Ch_{chapter.chapter_number:03d}"]
             )
+
             chapter_deck.add_note(note)
-            my_deck.add_note(note)
+            #my_deck.add_note(note)
 
             full_translated_text += line["nat"] + "\n"
             epub_body_html += f"""
@@ -291,28 +296,34 @@ def process_novel(novel_dir, start_chapter: int, stop_event: threading.Event):
         if stop_event.is_set(): return
 
         # --- STAGE 3: CHAPTER WRAP-UP ---
+        
+        # 1. Add this chapter to the master list
+        all_chapter_decks.append(chapter_deck) 
+
+        # 2. Export INDIVIDUAL Chapter Package (Just this specific chapter)
+        # FIX: Use 'chapter_deck', NOT 'all_chapter_decks' here.
         ch_package = genanki.Package(chapter_deck)
         ch_package.media_files = chapter_media_files
         ch_package.write_to_file(str(ch_apkg_path))
 
+        # 3. Write Text & XHTML
         (trans_dir / chapter.file_name).write_text(full_translated_text, encoding='utf-8')
         epub_html_full = f"<html><head><link rel='stylesheet' href='style/nav.css' type='text/css'/></head><body>{epub_body_html}</body></html>"
-        #(epub_dir / xhtml_filename).write_text(epub_html_full, encoding='utf-8')
         xhtml_path.write_text(epub_html_full, encoding='utf-8')
         
         print(f"    [Export] Updating Master EPUB and Master Anki Deck...")
         metadata_file = novel_dir / "metadata.json"
         novel_metadata = json.loads(metadata_file.read_text(encoding='utf-8')) if metadata_file.exists() else {}
         
-        # USE THE NEW UTIL FUNCTION
         raw_title = novel_metadata.get("title", novel_name)
         safe_title = sanitize_filename(raw_title)
 
-        # Build EPUB
+        # 4. Build Master EPUB
         build_final_epub(safe_title, novel_dir, novel_metadata)
         
-        # Build Anki Package
-        anki_package = genanki.Package(my_deck)
+        # 5. Export MASTER Anki Package (All chapters processed so far)
+        # FIX: Replaced 'my_deck' (which caused the crash) with 'all_chapter_decks'
+        anki_package = genanki.Package(all_chapter_decks) 
         anki_package.media_files = media_files_for_anki
         anki_package.write_to_file(str(novel_dir / (safe_title + ".apkg")))
 
