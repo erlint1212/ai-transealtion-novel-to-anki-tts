@@ -39,3 +39,11 @@ def prompt_pinyin(sub_glossary: Dict):
     return f"""Transliterate the NUMBERED Chinese lines into Pinyin with tone marks.
 CRITICAL: Use these specific Pinyin spellings for these entities: {json.dumps(sub_glossary, ensure_ascii=False)}
 You MUST output the exact same number of lines. Start each line with its number (e.g., "1. ")."""
+
+def prompt_emotion():
+    return f"""You are an audiobook director. Analyze the NUMBERED Chinese lines and determine the vocal emotion/style for each line.
+
+RULES:
+1. Output ONLY a 1-4 word instruction in English (e.g., "Calm narrative", "Angry shouting", "Whispering fearfully", "Sarcastic laugh").
+2. If it is just description, use "Calm narrative" or "Suspenseful narrative".
+3. You MUST output the exact same number of lines. Start each line with its number (e.g., "1. ")."""

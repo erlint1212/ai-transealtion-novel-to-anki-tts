@@ -1,22 +1,25 @@
 import random
+import hashlib # NEW
 from pathlib import Path
 import genanki
 from rich.console import Console
 
 console = Console()
 
-# --- FILE PATHS ---
-NOVELS_ROOT_DIR = Path("./Novels")
+def get_deterministic_id(text: str) -> int:
+    """Generates a consistent integer ID based on a string (e.g., Novel Name)."""
+    return int(hashlib.sha256(text.encode('utf-8')).hexdigest(), 16) % (1 << 31)
 
-# --- AI MODELS ---
+# --- FILE PATHS & AI ---
+NOVELS_ROOT_DIR = Path("./Novels")
 LLM_MODEL = "qwen2.5:14b-instruct-q5_K_M"
 TTS_MODEL = "Qwen/Qwen3-TTS-12Hz-1.7B-CustomVoice" 
 SPEAKER_VOICE = "Serena" 
 TARGET_LANGUAGE = "English"
 
 # --- ANKI SETUP ---
-DECK_ID = random.randrange(1 << 30, 1 << 31)
-MODEL_ID = random.randrange(1 << 30, 1 << 31)
+# We use a fixed string so the Model ID never changes.
+MODEL_ID = get_deterministic_id("NixOS_Chinese_Novel_Model_V1")
 
 ANKI_MODEL = genanki.Model(
     MODEL_ID,
