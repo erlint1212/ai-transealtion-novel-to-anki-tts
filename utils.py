@@ -3,6 +3,7 @@ import ollama
 from dataclasses import dataclass
 from typing import Optional, Dict, List
 from config import LLM_MODEL
+from pypinyin import pinyin, Style 
 
 @dataclass
 class Chapter:
@@ -75,3 +76,16 @@ def sanitize_filename(text: str) -> str:
     # 2. Remove illegal characters (< > : " / \ | ? *)
     safe_text = re.sub(r'[<>:"/\\|?*]', '', safe_text)
     return safe_text
+
+def generate_pinyin(text: str) -> str:
+    """
+    Generates Pinyin with tone marks for Chinese text.
+    Handles polyphones using pypinyin's built-in dictionary.
+    """
+    # style=Style.TONE ensures we get "hǎo" instead of "hao3" or "hao"
+    # heteronym=False picks the most likely pronunciation based on context
+    pinyin_list = pinyin(text, style=Style.TONE, heteronym=False)
+    
+    # pinyin() returns a list of lists (e.g. [['nǐ'], ['hǎo']]).
+    # We flatten it and join with spaces for readability.
+    return " ".join([item[0] for item in pinyin_list])

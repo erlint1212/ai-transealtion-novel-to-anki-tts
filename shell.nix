@@ -56,7 +56,7 @@ in pkgs.mkShell {
         cd ..
 
         echo "5/5 Installing GUI & Anki dependencies..."
-        uv pip install ollama genanki rich ebooklib soundfile pydub customtkinter pillow
+        uv pip install ollama genanki rich ebooklib soundfile pydub customtkinter pillow pypinyin
     else
         source .venv/bin/activate
     fi

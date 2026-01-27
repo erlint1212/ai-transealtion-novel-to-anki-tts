@@ -24,6 +24,7 @@ def run_cli():
     parser.add_argument("novel_name", nargs="?", help="The exact folder name of the novel to process.")
     parser.add_argument("--ch", type=int, default=1, help="The chapter number to start from (default: 1).")
     parser.add_argument("--list", action="store_true", help="List all available novels.")
+    parser.add_argument("--redo-pinyin", action="store_true", help="Regenerate Pinyin, EPUBs, and Anki decks without re-running AI.")
 
     args = parser.parse_args()
 
@@ -55,7 +56,7 @@ def run_cli():
     console.print("[dim]Press Ctrl+C at any time to safely pause and exit.[/dim]\n")
 
     try:
-        process_novel(novel_dir, args.ch, stop_event)
+        process_novel(novel_dir, args.ch, stop_event, redo_pinyin=args.redo_pinyin)
     except Exception as e:
         console.print(f"[bold red]CRITICAL ERROR:[/bold red] {e}")
 
