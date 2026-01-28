@@ -12,7 +12,6 @@ jobs:
     runs-on: ${{ matrix.os }}
     strategy:
       matrix:
-        # We test both Linux and Windows to ensure setup.py logic handles paths correctly
         os: [ubuntu-latest, windows-latest]
         python-version: ["3.10"]
 
@@ -26,7 +25,6 @@ jobs:
         python-version: ${{ matrix.python-version }}
 
     # 2. Install System Binaries
-    # Simulates the non-Python parts of 'conda env create'
     - name: Install System Deps (Ubuntu)
       if: matrix.os == 'ubuntu-latest'
       run: |
@@ -39,8 +37,6 @@ jobs:
         choco install ffmpeg
 
     # 3. Pre-install Python Dependencies (The "Conda" Simulation)
-    # We use uv to install CPU-only versions of what setup.py needs.
-    # This prevents setup.py from trying to download 4GB GPU wheels later.
     - name: Install Python Libs
       run: |
         python -m pip install --upgrade pip
@@ -53,21 +49,17 @@ jobs:
         uv pip install --system ollama genanki rich EbookLib soundfile pydub customtkinter pillow pypinyin
         
         # C. Install Qwen3-TTS Dependencies (Pre-emptive)
-        # We install these now so setup.py doesn't have to resolve them.
-        uv pip install --system transformers accelerate library scipy librosa einops
+        # REMOVED the typo "library" from this list
+        uv pip install --system transformers accelerate scipy librosa einops gradio
 
     # 4. Patch setup.py (Linux Only)
-    # setup.py tries to pip install a specific CUDA wheel for Flash Attention.
-    # We strip that single command out so the CPU runner doesn't choke.
     - name: Patch setup.py for CPU CI (Linux)
       if: matrix.os == 'ubuntu-latest'
       run: |
-        # Changes 'if system == "Linux":' to 'if False:' effectively disabling that block
         sed -i 's/if system == "Linux":/if False: # CI Mock/' setup.py
 
     # 5. Run the User Setup Script
-    # This clones Qwen3-TTS and pip installs it.
-    # Because we pre-installed deps in Step 3, this should be fast and safe.
+    # Now that deps are installed, this will clone the repo and do a lightweight install
     - name: Run setup.py
       run: |
         python setup.py
