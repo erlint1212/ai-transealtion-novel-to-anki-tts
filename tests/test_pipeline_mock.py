@@ -2,16 +2,19 @@ import unittest
 import shutil
 import json
 import sys
-import types # <--- NEW IMPORT
+import types
+import importlib.machinery 
 import threading
 from pathlib import Path
 from unittest.mock import patch, MagicMock
 import numpy as np
 
-# ROBUST MOCK: Use types.ModuleType instead of MagicMock
-# This allows 'import flash_attn' to succeed (preventing ModuleNotFoundError)
-# BUT it also satisfies importlib's internal checks (preventing ValueError: __spec__ not set)
+# ROBUST MOCK: Fake the Flash Attention module completely
+# 1. Create the module object
 mock_flash = types.ModuleType("flash_attn")
+# 2. Give it a dummy spec so importlib.util.find_spec() doesn't crash
+mock_flash.__spec__ = importlib.machinery.ModuleSpec(name="flash_attn", loader=None)
+# 3. Register it in sys.modules
 sys.modules["flash_attn"] = mock_flash
 
 # Add parent dir to path so we can import main
@@ -70,7 +73,7 @@ class TestMockPipeline(unittest.TestCase):
         # --- C. Run the Actual Pipeline ---
         stop_event = threading.Event()
         
-        # We pass self.novel_dir directly, so we don't need to patch the config root
+        # We pass self.novel_dir directly
         process_novel(self.novel_dir, 1, stop_event, redo_pinyin=False)
 
         # --- D. Assertions (Did it work?) ---
