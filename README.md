@@ -8,6 +8,7 @@ Designed for language learners, this tool uses **Local LLMs (Qwen2.5-14B)** and 
 ![Python 3.10](https://img.shields.io/badge/python-3.10-blue.svg)
 ![PyTorch](https://img.shields.io/badge/PyTorch-2.5.1%20CUDA%2012.4-orange)
 ![Platform](https://img.shields.io/badge/platform-NixOS%20%7C%20Linux%20%7C%20Windows-lightgrey)
+![Slim CI](https://github.com/erlint1212/ai-transealtion-novel-to-anki-tts/actions/workflows/slim_ci.yml/badge.svg)
 
 ---
 
@@ -128,6 +129,23 @@ The codebase is modularized for extensibility and fault tolerance:
 * `utils.py`: Text sanitization regex and JSON-parsing logic.
 * `prompts.py`: Few-shot prompts for precise entity extraction.
 * `exporters.py`: EPUB manifest generation and Anki packaging.
+
+---
+
+## 🧪 Testing & CI
+
+To ensure reliability without requiring a GPU for every run, this project uses a "Mocked Pipeline" testing strategy. This allows you to validate the entire application logic (file handling, regex, EPUB generation, Anki export) in seconds.
+
+### Running Tests Locally
+
+```bash
+# 1. Run Logic Unit Tests (Utils, Config, Regex)
+python -m unittest tests/test_utils.py
+
+# 2. Run the "Slim" Pipeline
+# This simulates a full run (translation -> audio -> export) by mocking the AI responses.
+python tests/test_pipeline_mock.py
+```
 
 ---
 
