@@ -3,13 +3,13 @@ import shutil
 import json
 import sys
 import types
-import importlib.machinery 
+import importlib.machinery # <--- NEW: Needed to create the spec
 import threading
 from pathlib import Path
 from unittest.mock import patch, MagicMock
 import numpy as np
 
-# ROBUST MOCK: Fake the Flash Attention module completely
+# 🛡️ ROBUST MOCK: Fake the Flash Attention module completely
 # 1. Create the module object
 mock_flash = types.ModuleType("flash_attn")
 # 2. Give it a dummy spec so importlib.util.find_spec() doesn't crash
