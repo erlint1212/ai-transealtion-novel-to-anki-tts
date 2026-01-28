@@ -32,7 +32,8 @@ This tool removes the hundreds of hours of manual labor required to create sente
 * **🖥️ Multi-Threaded GUI:** A sleek CustomTkinter interface that prevents system freezing, with live verbose logging and a fail-safe "Terminate" hook.
 * **💻 Headless CLI:** A command-line interface for server deployments or power users.
 * **🎵 Opus Audio Compression:** Squeezes thousands of audio files into OGG/OPUS format, saving up to 90% space with zero loss in vocal fidelity.
-* **📦 Polished Exports:** * **Anki Decks (`.apkg`):** Hierarchical subdecks (by chapter) with native Audio, Pinyin, Literal Translation, and Natural English.
+* **📦 Polished Exports:** 
+    * **Anki Decks (`.apkg`):** Hierarchical subdecks (by chapter) with native Audio, Pinyin, Literal Translation, and Natural English.
     * **E-Books (`.epub`):** Beautifully styled chapters with "Dark Mode" support and embedded HTML5 `<audio>` tags.
 
 ---

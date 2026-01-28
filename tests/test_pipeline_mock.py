@@ -2,13 +2,17 @@ import unittest
 import shutil
 import json
 import sys
+import types # <--- NEW IMPORT
 import threading
 from pathlib import Path
 from unittest.mock import patch, MagicMock
 import numpy as np
 
-# Pre-emptive Mock: Stop Qwen3-TTS from crying about missing Flash Attention
-sys.modules["flash_attn"] = MagicMock()
+# ROBUST MOCK: Use types.ModuleType instead of MagicMock
+# This allows 'import flash_attn' to succeed (preventing ModuleNotFoundError)
+# BUT it also satisfies importlib's internal checks (preventing ValueError: __spec__ not set)
+mock_flash = types.ModuleType("flash_attn")
+sys.modules["flash_attn"] = mock_flash
 
 # Add parent dir to path so we can import main
 sys.path.append(str(Path(__file__).parent.parent))
@@ -42,7 +46,6 @@ class TestMockPipeline(unittest.TestCase):
     @patch('main.call_llm')       # 1. Mock the LLM Network Call
     @patch('main.Qwen3TTSModel')  # 2. Mock the Heavy TTS Class
     @patch('main.ollama')         # 3. Mock the Ollama Library
-    # REMOVED: @patch('main.NOVELS_ROOT_DIR'...) <-- This caused the crash
     def test_full_pipeline_flow(self, mock_ollama, mock_tts_class, mock_call_llm):
         
         # --- A. Setup LLM Mock Responses ---
