@@ -1,0 +1,52 @@
+name: Slim CI (Mocked)
+
+on:
+  push:
+    branches: [ "main" ]
+  pull_request:
+    branches: [ "main" ]
+
+jobs:
+  test-pipeline:
+    name: Test on ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+        python-version: ["3.10"]
+
+    steps:
+    - uses: actions/checkout@v3
+    
+    # 1. Setup Python
+    - name: Set up Python ${{ matrix.python-version }}
+      uses: actions/setup-python@v4
+      with:
+        python-version: ${{ matrix.python-version }}
+        cache: 'pip'
+
+    # 2. Install Dependencies (CPU ONLY for speed)
+    - name: Install Dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install uv
+        # ADDED --system flag so uv installs to the global GH runner python
+        uv pip install --system torch torchaudio --index-url https://download.pytorch.org/whl/cpu
+        uv pip install --system ollama genanki soundfile rich ebooklib transformers pydub pypinyin customtkinter pillow
+
+    # 3. Install Qwen3-TTS
+    - name: Install Qwen3-TTS
+      run: |
+        git clone https://github.com/QwenLM/Qwen3-TTS.git
+        # ADDED --system flag here too
+        uv pip install --system -e ./Qwen3-TTS
+
+    # 4. Run the Mock Test
+    - name: Run Slim Pipeline Test
+      run: |
+        python tests/test_pipeline_mock.py
+
+    # 5. Run standard tests
+    - name: Run utils tests
+      run: |
+        python tests/test_utils.py
