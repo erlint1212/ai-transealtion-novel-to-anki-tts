@@ -12,6 +12,7 @@ jobs:
     runs-on: ${{ matrix.os }}
     strategy:
       matrix:
+        # We test both Linux and Windows to ensure setup.py logic handles paths correctly
         os: [ubuntu-latest, windows-latest]
         python-version: ["3.10"]
 
@@ -24,46 +25,49 @@ jobs:
       with:
         python-version: ${{ matrix.python-version }}
 
-    # 2. Install System Binaries (Simulating environment.yml channels)
-    # We use system package managers instead of Conda to save GBs of bandwidth.
-    
+    # 2. Install System Binaries
+    # Simulates the non-Python parts of 'conda env create'
     - name: Install System Deps (Ubuntu)
       if: matrix.os == 'ubuntu-latest'
       run: |
         sudo apt-get update
-        # Installs ffmpeg, sox, libsndfile, and Tkinter (required by gui.py)
         sudo apt-get install -y ffmpeg sox libsndfile1 python3-tk
 
     - name: Install System Deps (Windows)
       if: matrix.os == 'windows-latest'
       run: |
-        # Choco is pre-installed on GitHub Windows runners
         choco install ffmpeg
-        # Tkinter is included in standard Windows Python, sox/libsndfile handled by wheels
 
-    # 3. Install Python Dependencies (CPU Optimization)
+    # 3. Pre-install Python Dependencies (The "Conda" Simulation)
+    # We use uv to install CPU-only versions of what setup.py needs.
+    # This prevents setup.py from trying to download 4GB GPU wheels later.
     - name: Install Python Libs
       run: |
         python -m pip install --upgrade pip
         pip install uv
         
-        # A. Install CPU-only Torch (Saves ~2.5GB vs Conda GPU install)
+        # A. Install CPU-only Torch
         uv pip install --system torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cpu
         
-        # B. Install rest of environment.yml deps
-        uv pip install --system ollama genanki rich EbookLib soundfile pydub customtkinter pillow
+        # B. Install General Dependencies
+        uv pip install --system ollama genanki rich EbookLib soundfile pydub customtkinter pillow pypinyin
+        
+        # C. Install Qwen3-TTS Dependencies (Pre-emptive)
+        # We install these now so setup.py doesn't have to resolve them.
+        uv pip install --system transformers accelerate library scipy librosa einops
 
     # 4. Patch setup.py (Linux Only)
-    # The real setup.py tries to install a CUDA-specific Flash-Attention wheel.
-    # We must disable this block for the CPU-only CI runner, or it will crash.
+    # setup.py tries to pip install a specific CUDA wheel for Flash Attention.
+    # We strip that single command out so the CPU runner doesn't choke.
     - name: Patch setup.py for CPU CI (Linux)
       if: matrix.os == 'ubuntu-latest'
       run: |
-        # Replaces 'if system == "Linux":' with 'if False: # CI Mock'
+        # Changes 'if system == "Linux":' to 'if False:' effectively disabling that block
         sed -i 's/if system == "Linux":/if False: # CI Mock/' setup.py
 
-    # 5. Run the Project Setup Script
-    # This validates that setup.py correctly clones and installs Qwen3-TTS
+    # 5. Run the User Setup Script
+    # This clones Qwen3-TTS and pip installs it.
+    # Because we pre-installed deps in Step 3, this should be fast and safe.
     - name: Run setup.py
       run: |
         python setup.py

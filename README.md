@@ -106,7 +106,7 @@ Run the pipeline directly from the terminal.
 python cli.py --list
 
 # Process a specific novel starting from Chapter 419
-python cli.py Villainous_Saintess_CH --ch 419
+python cli.py Novel_Title --ch 419
 
 ```
 
