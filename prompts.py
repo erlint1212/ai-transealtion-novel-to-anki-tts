@@ -3,25 +3,31 @@ from typing import Dict
 from config import TARGET_LANGUAGE
 
 def prompt_json():
-    return f"""You are a precise data extraction AI. Extract ALL proper nouns (Characters, Places, Clans) from the text.
-RULES:
-1. Output ONLY a valid JSON object. Do not include markdown block ticks.
-2. 'pinyin' MUST include tone marks (e.g., "Wénní").
-3. 'english_name' MUST be a natural English translation or phonetic equivalent (e.g., "Vinnie").
-4. 'pronoun' MUST be in the format "he/him", "she/her", "it/its", or "they/them" based on context.
+    return """
+    You are an expert Novel Entity Extractor. 
+    Analyze the provided Chinese text and extract:
+    1. Characters (Names, Pronouns)
+    2. Place Names (Locations)
+    3. Items (Unique objects, artifacts, potions)
+    4. Skills (Techniques, spells, abilities, usually in brackets like 【...】 or quotes)
 
-EXAMPLE INPUT:
-文尼在奥兰迪亚遇到了艾茜菲丝。
-
-EXAMPLE JSON OUTPUT:
-{{
-  "characters": {{
-    "文尼": {{ "pinyin": "Wénní", "english_name": "Vinnie", "pronoun": "he/him" }},
-    "艾茜菲丝": {{ "pinyin": "Àiqīfēisī", "english_name": "Aquisis", "pronoun": "she/her" }}
-  }},
-  "places": {{ "奥兰迪亚": {{ "pinyin": "Àolándìyà", "english_name": "Orlandia" }} }}
-}}
-Now process the user text."""
+    Return ONLY a JSON object. Do not include markdown formatting.
+    Format:
+    {
+        "characters": {
+            "ChineseName": { "pinyin": "Pinyin", "english_name": "EnglishName", "pronoun": "he/she/it/they" }
+        },
+        "places": {
+            "ChineseName": { "pinyin": "Pinyin", "english_name": "EnglishName" }
+        },
+        "items": {
+            "ChineseName": { "pinyin": "Pinyin", "english_name": "EnglishName" }
+        },
+        "skills": {
+            "ChineseName": { "pinyin": "Pinyin", "english_name": "EnglishName" }
+        }
+    }
+    """
 
 def prompt_natural(sub_glossary: Dict):
     return f"""Translate the NUMBERED Chinese lines to natural {TARGET_LANGUAGE}.

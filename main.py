@@ -75,20 +75,33 @@ def run_text_stage(chapter, paths, glossary, stop_event, redo_pinyin):
         print(f"    - Chunk {i+1}/{len(chunks)} ({len(chunk_dict)} lines): Sending to LLM...")
         numbered_input = "\n".join([f"{idx}. {text}" for idx, text in chunk_dict.items()])
 
-        # Dynamic Glossary Update
+        # --- UPDATED GLOSSARY LOGIC START ---
         try:
             res_json = call_llm(prompt_json(), numbered_input)
             json_str = res_json[res_json.find('{'):res_json.rfind('}')+1]
             new_entities = json.loads(json_str)
+            
             glossary_changed = False
-            for cat in ["characters", "places"]:
-                for name, data in new_entities.get(cat, {}).items():
+            
+            # Iterate over all 4 categories: Characters, Places, Items, Skills
+            target_categories = ["characters", "places", "items", "skills"]
+            
+            for cat in target_categories:
+                # Get the entities the LLM found for this category (default to empty dict if none)
+                found_entities = new_entities.get(cat, {})
+                
+                for name, data in found_entities.items():
+                    # Strict Check: Only add if it doesn't exist in our Master Glossary
+                    # Note: We assume glossary[cat] exists because we initialize it in process_novel
                     if name not in glossary[cat]:
                         glossary[cat][name] = data
                         glossary_changed = True
+                        # print(f"    [Glossary] Discovered new {cat[:-1]}: {name}")
+
             if glossary_changed:
                 paths["glossary"].write_text(json.dumps(glossary, ensure_ascii=False, indent=4), encoding='utf-8')
         except Exception: pass
+        # --- UPDATED GLOSSARY LOGIC END ---
 
         # LLM Translations
         chunk_glossary = get_relevant_glossary(numbered_input, glossary)
@@ -208,11 +221,11 @@ def run_audio_stage(chapter, chapter_lines, novel_name, paths, stop_event, redo_
         full_text_en += line["nat"] + "\n"
         epub_body += f"""
         <div class="study-block">
+            <audio controls preload="none"><source src="media/ch_{chapter.chapter_number:04d}/{audio_filename}" type="audio/ogg"></audio>
             <p class="cn">{line["cn"]}</p>
             <p class="py">{line["py"]}</p>
             <p class="lit">"{line["lit"]}"</p>
             <p class="en">{line["nat"]}</p>
-            <audio controls preload="none"><source src="media/ch_{chapter.chapter_number:04d}/{audio_filename}" type="audio/ogg"></audio>
         </div>"""
 
     if tts_model: 
@@ -257,8 +270,29 @@ def run_export_stage(chapter, chapter_deck, media_files, full_text, epub_html, p
 # --- MAIN CONTROLLER ---
 def process_novel(novel_dir, start_chapter: int, stop_event: threading.Event, redo_pinyin: bool = False):
     paths = setup_directories(novel_dir)
-    glossary = json.loads(paths["glossary"].read_text()) if paths["glossary"].exists() else {"characters": {}, "places": {}}
     
+    # --- UPDATED GLOSSARY INITIALIZATION START ---
+    default_glossary = {
+        "characters": {}, 
+        "places": {}, 
+        "items": {}, 
+        "skills": {}
+    }
+
+    if paths["glossary"].exists():
+        try:
+            glossary = json.loads(paths["glossary"].read_text(encoding='utf-8'))
+            # Lazy Migration: Ensure new keys (items, skills) exist in old files
+            for key in default_glossary:
+                if key not in glossary:
+                    glossary[key] = {}
+        except json.JSONDecodeError:
+            print("[!] Glossary file corrupted. Starting fresh.")
+            glossary = default_glossary
+    else:
+        glossary = default_glossary
+    # --- UPDATED GLOSSARY INITIALIZATION END ---
+
     all_chapter_decks = []
     global_media_list = []
 
@@ -279,11 +313,8 @@ def process_novel(novel_dir, start_chapter: int, stop_event: threading.Event, re
         # Verification Check
         json_path = paths["trans"] / chapter.file_name.replace('.txt', '.json')
         apkg_path = paths["anki"] / f"Ch_{chapter.chapter_number:03d}.apkg"
-        audio_count = len(list((paths["media"] / f"ch_{chapter.chapter_number:04d}").glob("*.opus")))
-        # Quick logic: Roughly check lines vs audio files (if we have lines loaded)
-        # For simplicity in Main Controller, we proceed to stages which handle skipping internally
+        
         if json_path.exists() and apkg_path.exists() and not redo_pinyin:
-             # Basic verification to avoid spamming "Loaded" if unnecessary
              pass 
 
         # --- EXECUTE PIPELINE ---

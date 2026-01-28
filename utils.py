@@ -30,14 +30,30 @@ def chunk_text_into_numbered_lines(text: str, max_chars=400) -> List[Dict[int, s
     if current_chunk: chunks.append(current_chunk)
     return chunks
 
-def get_relevant_glossary(text: str, master_glossary: Dict) -> Dict:
-    """Scans the text for keys in the master glossary and returns only the matches."""
-    relevant_glossary = {"characters": {}, "places": {}}
-    for c_name, c_data in master_glossary.get("characters", {}).items():
-        if c_name in text: relevant_glossary["characters"][c_name] = c_data
-    for p_name, p_data in master_glossary.get("places", {}).items():
-        if p_name in text: relevant_glossary["places"][p_name] = p_data
-    return {k: v for k, v in relevant_glossary.items() if v}
+def get_relevant_glossary(text: str, master_glossary: dict) -> dict:
+    """
+    Scans the master glossary and returns a mini-glossary 
+    containing only the entities found in the current text chunk.
+    Supports: characters, places, items, skills.
+    """
+    relevant = {
+        "characters": {},
+        "places": {},
+        "items": {},
+        "skills": {}
+    }
+
+    # Iterate through all 4 categories
+    categories = ["characters", "places", "items", "skills"]
+    
+    for category in categories:
+        # Check if the category exists in the master file (backward compatibility)
+        if category in master_glossary:
+            for cn_name, data in master_glossary[category].items():
+                if cn_name in text:
+                    relevant[category][cn_name] = data
+    
+    return relevant
 
 def call_llm(system_prompt: str, user_text: str) -> str:
     response = ollama.chat(model=LLM_MODEL, messages=[
