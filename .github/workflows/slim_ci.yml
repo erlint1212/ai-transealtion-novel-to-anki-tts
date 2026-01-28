@@ -49,7 +49,6 @@ jobs:
         uv pip install --system ollama genanki rich EbookLib soundfile pydub customtkinter pillow pypinyin
         
         # C. Install Qwen3-TTS Dependencies (Pre-emptive)
-        # REMOVED the typo "library" from this list
         uv pip install --system transformers accelerate scipy librosa einops gradio
 
     # 4. Patch setup.py (Linux Only)
@@ -59,17 +58,22 @@ jobs:
         sed -i 's/if system == "Linux":/if False: # CI Mock/' setup.py
 
     # 5. Run the User Setup Script
-    # Now that deps are installed, this will clone the repo and do a lightweight install
     - name: Run setup.py
+      env: 
+        PYTHONIOENCODING: utf-8  # <--- FIX: Forces Windows to handle emojis correctly
       run: |
         python setup.py
 
     # 6. Run the Mock Pipeline Test
     - name: Run Slim Pipeline Test
+      env:
+        PYTHONIOENCODING: utf-8 # Good practice for the test runner too
       run: |
         python tests/test_pipeline_mock.py
 
     # 7. Run Logic Unit Tests
     - name: Run Utils Tests
+      env:
+        PYTHONIOENCODING: utf-8
       run: |
         python tests/test_utils.py
