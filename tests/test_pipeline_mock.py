@@ -13,6 +13,10 @@ sys.path.append(str(Path(__file__).parent.parent))
 
 from main import process_novel
 
+from unittest.mock import MagicMock
+# Pre-emptive Mock: Stop Qwen3-TTS from crying about missing Flash Attention
+sys.modules["flash_attn"] = MagicMock()
+
 class TestMockPipeline(unittest.TestCase):
     def setUp(self):
         """Setup a temporary dummy novel directory."""
