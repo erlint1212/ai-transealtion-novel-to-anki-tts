@@ -85,7 +85,7 @@ def generate_project_context(output_file="project_context.txt", extra_folders=No
             tree_str += "{}{}\n".format(subindent, file)
 
             # ONLY append contents if it's a .py file
-            if file.endswith('.py'):
+            if file.endswith(('.py', '.nix', '.md')):
                 content_str += f"\n--- START OF FILE: {file_path} ---\n"
                 try:
                     with open(file_path, 'r', encoding='utf-8', errors='ignore') as f:

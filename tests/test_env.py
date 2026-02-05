@@ -2,11 +2,11 @@ import sys
 import subprocess
 
 def print_status(component, success, message=""):
-    status = "✅ PASS" if success else "❌ FAIL"
+    status = " PASS" if success else " FAIL"
     color = "\033[92m" if success else "\033[91m"
     print(f"{color}{status} | {component}{' - ' + message if message else ''}\033[0m")
 
-print("\n--- 🔍 TESTING ULTIMATE NIXOS AI ENVIRONMENT ---\n")
+print("\n---  TESTING ULTIMATE NIXOS AI ENVIRONMENT ---\n")
 
 # 1. Test Python Version (Must be 3.10 for Flash-Attention)
 is_310 = sys.version_info.major == 3 and sys.version_info.minor == 10

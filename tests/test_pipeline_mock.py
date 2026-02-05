@@ -3,7 +3,7 @@ import shutil
 import json
 import sys
 import types
-import importlib.machinery # <--- NEW: Needed to create the spec
+import importlib.machinery 
 import threading
 from pathlib import Path
 from unittest.mock import patch, MagicMock
@@ -91,7 +91,7 @@ class TestMockPipeline(unittest.TestCase):
         self.assertTrue(media_dir.exists())
         self.assertTrue(len(list(media_dir.glob("*.opus"))) > 0, "Audio files missing")
 
-        print("\n✅ Mock CI Pipeline Test Passed!")
+        print("\n Mock CI Pipeline Test Passed!")
 
 if __name__ == '__main__':
     unittest.main()

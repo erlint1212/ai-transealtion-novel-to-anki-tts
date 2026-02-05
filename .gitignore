@@ -1,4 +1,7 @@
 __pycache__/
+social_preview.png
+generate_thumbnail.py
+context_builder.py
 .venv/
 ollama.log
 parser.log
