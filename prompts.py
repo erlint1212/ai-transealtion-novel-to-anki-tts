@@ -1,6 +1,8 @@
 import json
 from typing import Dict
+
 from config import TARGET_LANGUAGE
+
 
 def prompt_json():
     return """
@@ -29,11 +31,13 @@ def prompt_json():
     }
     """
 
+
 def prompt_natural(sub_glossary: Dict):
     return f"""Translate the NUMBERED Chinese lines to natural {TARGET_LANGUAGE}.
 Convert imperial to metric. 
 CRITICAL: Use these specific English names for these entities: {json.dumps(sub_glossary, ensure_ascii=False)}
 You MUST output the exact same number of lines. Start each line with its number (e.g., "1. ")."""
+
 
 def prompt_literal(sub_glossary: Dict):
     return f"""Translate the NUMBERED Chinese lines to EXTREMELY LITERAL word-for-word English.
@@ -41,10 +45,12 @@ Preserve Chinese grammar.
 CRITICAL: Use these specific English names for these entities: {json.dumps(sub_glossary, ensure_ascii=False)}
 You MUST output the exact same number of lines. Start each line with its number (e.g., "1. ")."""
 
+
 def prompt_pinyin(sub_glossary: Dict):
     return f"""Transliterate the NUMBERED Chinese lines into Pinyin with tone marks.
 CRITICAL: Use these specific Pinyin spellings for these entities: {json.dumps(sub_glossary, ensure_ascii=False)}
 You MUST output the exact same number of lines. Start each line with its number (e.g., "1. ")."""
+
 
 def prompt_emotion():
     return f"""You are an audiobook director. Analyze the NUMBERED Chinese lines and determine the vocal emotion/style for each line.
