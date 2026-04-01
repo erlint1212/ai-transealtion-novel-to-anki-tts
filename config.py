@@ -15,7 +15,7 @@ def get_deterministic_id(text: str) -> int:
 
 # --- FILE PATHS & AI ---
 NOVELS_ROOT_DIR = Path("./Novels")
-LLM_MODEL = "qwen2.5:14b-instruct-q5_K_M"
+LLM_MODEL = "qwen3.5:9b" #"qwen2.5:14b-instruct-q5_K_M"
 TTS_MODEL = "Qwen/Qwen3-TTS-12Hz-1.7B-CustomVoice"
 SPEAKER_VOICE = "Serena"
 TARGET_LANGUAGE = "English"
