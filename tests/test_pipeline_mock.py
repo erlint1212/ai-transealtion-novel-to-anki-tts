@@ -21,6 +21,7 @@ sys.modules["flash_attn"] = mock_flash
 # Add parent dir to path so we can import main
 sys.path.append(str(Path(__file__).parent.parent))
 
+from config import set_backend, set_llm_model
 from main import process_novel
 
 
@@ -46,27 +47,30 @@ class TestMockPipeline(unittest.TestCase):
             "Hello world.\nThis is a test line for CI.", encoding="utf-8"
         )
 
+        # Set a mock backend and model so the pipeline doesn't error
+        set_backend("Ollama")
+        set_llm_model("mock-test-model")
+
     def tearDown(self):
         """Clean up the mess after testing."""
         if self.test_root.exists():
             shutil.rmtree(self.test_root)
 
-    @patch("main.call_llm")  # 1. Mock the LLM Network Call
-    @patch("main.Qwen3TTSModel")  # 2. Mock the Heavy TTS Class
-    @patch("main.ollama")  # 3. Mock the Ollama Library
-    def test_full_pipeline_flow(self, mock_ollama, mock_tts_class, mock_call_llm):
+    @patch("main.call_llm")        # 1. Mock the direct LLM call (glossary extraction)
+    @patch("main.robust_parse")    # 2. Mock the validated LLM calls (nat, lit, emo)
+    @patch("main.Qwen3TTSModel")   # 3. Mock the Heavy TTS Class
+    @patch("main.unload_llm")      # 4. Mock VRAM unload (replaces old main.ollama)
+    def test_full_pipeline_flow(self, mock_unload, mock_tts_class, mock_robust_parse, mock_call_llm):
 
         # --- A. Setup LLM Mock Responses ---
-        mock_json_resp = '{"characters": {}, "places": {}}'
-        mock_nat_resp = "1. Hello world.\n2. This is a test line for CI."
-        mock_lit_resp = "1. Literal Hello.\n2. Literal Test."
-        mock_emo_resp = "1. Calm narrative\n2. Excited shouting"
+        # call_llm is used once per chunk for glossary extraction
+        mock_call_llm.return_value = '{"characters": {}, "places": {}}'
 
-        mock_call_llm.side_effect = [
-            mock_json_resp,  # Glossary Prompt
-            mock_nat_resp,  # Natural Prompt
-            mock_lit_resp,  # Literal Prompt
-            mock_emo_resp,  # Emotion Prompt
+        # robust_parse is called 3 times per chunk: natural, literal, emotion
+        mock_robust_parse.side_effect = [
+            {1: "Hello world.", 2: "This is a test line for CI."},
+            {1: "Literal Hello.", 2: "Literal Test."},
+            {1: "Calm narrative", 2: "Excited shouting"},
         ]
 
         # --- B. Setup TTS Mock ---
@@ -78,7 +82,6 @@ class TestMockPipeline(unittest.TestCase):
         # --- C. Run the Actual Pipeline ---
         stop_event = threading.Event()
 
-        # We pass self.novel_dir directly
         process_novel(self.novel_dir, 1, stop_event, redo_pinyin=False)
 
         # --- D. Assertions (Did it work?) ---
@@ -95,6 +98,11 @@ class TestMockPipeline(unittest.TestCase):
         media_dir = self.novel_dir / "media" / "ch_0001"
         self.assertTrue(media_dir.exists())
         self.assertTrue(len(list(media_dir.glob("*.opus"))) > 0, "Audio files missing")
+
+        # Verify mocks were called correctly
+        mock_call_llm.assert_called_once()       # 1 glossary call
+        self.assertEqual(mock_robust_parse.call_count, 3)  # nat + lit + emo
+        mock_unload.assert_called_once()          # VRAM cleanup before TTS
 
         print("\n Mock CI Pipeline Test Passed!")
 
