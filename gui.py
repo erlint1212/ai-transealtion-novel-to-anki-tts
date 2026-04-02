@@ -158,7 +158,9 @@ class NovelApp(ctk.CTk):
             font=ctk.CTkFont(weight="bold"),
             command=self.start_processing,
         )
-        self.start_btn.grid(row=10, column=0, columnspan=2, padx=20, pady=10, sticky="ew")
+        self.start_btn.grid(
+            row=10, column=0, columnspan=2, padx=20, pady=10, sticky="ew"
+        )
 
         self.stop_btn = ctk.CTkButton(
             self.sidebar,

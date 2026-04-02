@@ -14,7 +14,13 @@ import transformers
 from qwen_tts import Qwen3TTSModel
 
 # Local Imports
-from config import ANKI_MODEL, SPEAKER_VOICE, TTS_MODEL, get_deterministic_id, get_llm_model
+from config import (
+    ANKI_MODEL,
+    SPEAKER_VOICE,
+    TTS_MODEL,
+    get_deterministic_id,
+    get_llm_model,
+)
 from exporters import build_final_epub
 from prompts import prompt_emotion, prompt_json, prompt_literal, prompt_natural
 from utils import (
@@ -122,10 +128,16 @@ def run_text_stage(chapter, paths, glossary, stop_event, redo_pinyin):
 
         chunk_glossary = get_relevant_glossary(numbered_input, glossary)
         nat = robust_parse(
-            prompt_natural(chunk_glossary), numbered_input, len(chunk_dict), label="Natural"
+            prompt_natural(chunk_glossary),
+            numbered_input,
+            len(chunk_dict),
+            label="Natural",
         )
         lit = robust_parse(
-            prompt_literal(chunk_glossary), numbered_input, len(chunk_dict), label="Literal"
+            prompt_literal(chunk_glossary),
+            numbered_input,
+            len(chunk_dict),
+            label="Literal",
         )
         emo = robust_parse(
             prompt_emotion(), numbered_input, len(chunk_dict), label="Emotion"

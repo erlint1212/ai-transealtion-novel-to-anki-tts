@@ -47,7 +47,9 @@ def get_backend_name():
 def set_backend(name: str):
     global _active_backend, _active_model
     if name not in BACKENDS:
-        raise ValueError(f"Unknown backend '{name}'. Choose from: {list(BACKENDS.keys())}")
+        raise ValueError(
+            f"Unknown backend '{name}'. Choose from: {list(BACKENDS.keys())}"
+        )
     _active_backend = name
     _active_model = None  # Reset — user must pick a model for the new backend
     console.print(f"[bold cyan][Config] LLM Backend set to: {name}[/bold cyan]")

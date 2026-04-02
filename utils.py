@@ -56,6 +56,7 @@ def get_relevant_glossary(text: str, master_glossary: dict) -> dict:
 
 # LLM BACKEND FUNCTIONS
 
+
 def list_models() -> Tuple[List[str], str]:
     """
     Queries the active backend for available models.
@@ -68,6 +69,7 @@ def list_models() -> Tuple[List[str], str]:
     if backend["type"] == "ollama":
         try:
             import ollama
+
             response = ollama.list()
             names = sorted(m.model for m in response.models)
             if not names:
@@ -79,6 +81,7 @@ def list_models() -> Tuple[List[str], str]:
     elif backend["type"] == "openai":
         try:
             from openai import OpenAI
+
             client = OpenAI(
                 base_url=backend["base_url"],
                 api_key=backend["api_key"],
@@ -123,6 +126,7 @@ def call_llm(system_prompt: str, user_text: str) -> str:
 
     if backend["type"] == "ollama":
         import ollama
+
         response = ollama.chat(
             model=model,
             messages=[
@@ -135,6 +139,7 @@ def call_llm(system_prompt: str, user_text: str) -> str:
 
     elif backend["type"] == "openai":
         from openai import OpenAI
+
         client = OpenAI(base_url=backend["base_url"], api_key=backend["api_key"])
         response = client.chat.completions.create(
             model=model,
@@ -157,6 +162,7 @@ def unload_llm():
 
     if backend["type"] == "ollama":
         import ollama
+
         model = get_llm_model()
         print("[SYSTEM] Unloading LLM from Ollama to free VRAM...")
         ollama.generate(model=model, prompt="", keep_alive=0)
@@ -172,7 +178,8 @@ def unload_llm():
         print(f"[SYSTEM] Unloading '{model}' from LM Studio...")
         payload = json.dumps({"instance_id": model}).encode("utf-8")
         req = urllib.request.Request(
-            url, data=payload,
+            url,
+            data=payload,
             headers={"Content-Type": "application/json"},
             method="POST",
         )
@@ -190,6 +197,7 @@ def unload_llm():
 
 
 # TEXT PROCESSING UTILITIES
+
 
 def parse_numbered_output(llm_output: str, expected_count: int) -> Dict[int, str]:
     results = {i: "" for i in range(1, expected_count + 1)}
@@ -236,7 +244,7 @@ def robust_parse(
 def clean_for_tts(text: str) -> str:
     """Sanitizes text to prevent TTS hallucinations on short/mixed-language lines."""
     text = re.sub(r"^(?i)(chapter|ch\.?)\s*\d+\s*[-—:]?\s*", "", text)
-    text = re.sub(r"[""（）《》【】\-—]", "", text)
+    text = re.sub(r"[" "（）《》【】\-—]", "", text)
     text = re.sub(r"？+", "？", text)
     text = re.sub(r"！+", "！", text)
     text = re.sub(r"…+", "…", text)

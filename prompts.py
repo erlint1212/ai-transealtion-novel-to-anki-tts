@@ -50,8 +50,14 @@ You MUST output the exact same number of lines. Start each line with its number 
 
 def prompt_literal(sub_glossary: Dict):
     return f"""Translate the NUMBERED Chinese lines to EXTREMELY LITERAL word-for-word English.
-Preserve Chinese grammar.
-CRITICAL: Use these specific English names for these entities: {json.dumps(sub_glossary, ensure_ascii=False)}
+Preserve Chinese grammar and word order. Do NOT rephrase into natural English.
+
+EXAMPLE:
+Chinese: 她的眼睛闪烁着不可思议之色
+WRONG (too natural): Her eyes flashed with disbelief.
+CORRECT (literal): Her eyes flickered with impossible-to-believe color.
+
+CRITICAL: Use these specific English names: {json.dumps(sub_glossary, ensure_ascii=False)}
 You MUST output the exact same number of lines. Start each line with its number (e.g., "1. ").
 {_OUTPUT_RULES}"""
 

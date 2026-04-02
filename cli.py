@@ -126,7 +126,9 @@ def run_cli():
     console.print(
         f"\n[bold green]🚀 STARTING PIPELINE: {args.novel_name} (Starting at Ch {args.ch})[/bold green]"
     )
-    console.print(f"[dim]Backend: {args.backend} | Model: {args.model or models[0]}[/dim]")
+    console.print(
+        f"[dim]Backend: {args.backend} | Model: {args.model or models[0]}[/dim]"
+    )
     console.print("[dim]Press Ctrl+C at any time to safely pause and exit.[/dim]\n")
 
     try:
