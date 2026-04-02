@@ -11,9 +11,16 @@ import customtkinter as ctk
 from PIL import Image
 
 # Local Imports
-from config import NOVELS_ROOT_DIR
+from config import (
+    BACKENDS,
+    NOVELS_ROOT_DIR,
+    get_backend_name,
+    get_llm_model,
+    set_backend,
+    set_llm_model,
+)
 from main import process_novel
-from utils import extract_chapter_number
+from utils import extract_chapter_number, list_models
 
 ctk.set_appearance_mode("Dark")
 ctk.set_default_color_theme("blue")
@@ -25,6 +32,8 @@ original_stderr = sys.stderr
 # Regex to find terminal color codes
 ansi_escape = re.compile(r"\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])")
 
+NO_MODELS_TEXT = "No models found"
+
 
 class TextRedirector:
     def __init__(self, text_widget, original_stream):
@@ -32,18 +41,11 @@ class TextRedirector:
         self.original_stream = original_stream
 
     def write(self, text):
-        # 1. Print to the actual Konsole immediately
         self.original_stream.write(text)
-
-        # 2. Strip the ANSI color codes for the GUI
         clean_text = ansi_escape.sub("", text)
-
-        # 3. THREAD SAFE GUI UPDATE:
-        # Pass the update to the main UI thread using .after()
         self.text_widget.after(0, self._update_gui, clean_text)
 
     def _update_gui(self, text):
-        """Helper method that only runs on the Main UI Thread."""
         self.text_widget.configure(state="normal")
         self.text_widget.insert("end", text)
         self.text_widget.see("end")
@@ -62,9 +64,7 @@ class NovelApp(ctk.CTk):
         # Thread & State Control
         self.ai_thread = None
         self.stop_event = threading.Event()
-        self.current_cover_path = (
-            None  # Stores the path of the newly selected cover image
-        )
+        self.current_cover_path = None
 
         # --- LAYOUT SETUP ---
         self.grid_columnconfigure(1, weight=1)
@@ -75,33 +75,81 @@ class NovelApp(ctk.CTk):
         # ====================
         self.sidebar = ctk.CTkFrame(self, width=250, corner_radius=0)
         self.sidebar.grid(row=0, column=0, sticky="nsew")
-        self.sidebar.grid_rowconfigure(5, weight=1)
+        self.sidebar.grid_rowconfigure(9, weight=1)  # Spacer row
 
         ctk.CTkLabel(
             self.sidebar, text="Configuration", font=ctk.CTkFont(size=20, weight="bold")
-        ).grid(row=0, column=0, padx=20, pady=(20, 10))
+        ).grid(row=0, column=0, columnspan=2, padx=20, pady=(20, 10))
 
-        # Novel Selection
+        # ---- LLM Backend Selection ----
+        ctk.CTkLabel(self.sidebar, text="LLM Backend:").grid(
+            row=1, column=0, columnspan=2, padx=20, pady=(10, 0), sticky="w"
+        )
+        self.backend_var = ctk.StringVar(value=get_backend_name())
+        self.backend_dropdown = ctk.CTkOptionMenu(
+            self.sidebar,
+            variable=self.backend_var,
+            values=list(BACKENDS.keys()),
+            command=self.on_backend_change,
+        )
+        self.backend_dropdown.grid(
+            row=2, column=0, columnspan=2, padx=20, pady=(5, 10), sticky="ew"
+        )
+
+        # ---- Model Selection + Refresh ----
+        ctk.CTkLabel(self.sidebar, text="Model:").grid(
+            row=3, column=0, columnspan=2, padx=20, pady=(5, 0), sticky="w"
+        )
+
+        # Frame to hold the model dropdown + refresh button side by side
+        self.model_frame = ctk.CTkFrame(self.sidebar, fg_color="transparent")
+        self.model_frame.grid(
+            row=4, column=0, columnspan=2, padx=20, pady=(5, 10), sticky="ew"
+        )
+        self.model_frame.grid_columnconfigure(0, weight=1)
+
+        self.model_var = ctk.StringVar(value=NO_MODELS_TEXT)
+        self.model_dropdown = ctk.CTkOptionMenu(
+            self.model_frame,
+            variable=self.model_var,
+            values=[NO_MODELS_TEXT],
+            command=self.on_model_change,
+        )
+        self.model_dropdown.grid(row=0, column=0, padx=(0, 5), sticky="ew")
+
+        self.refresh_btn = ctk.CTkButton(
+            self.model_frame,
+            text="⟳",
+            width=36,
+            command=self.refresh_models,
+        )
+        self.refresh_btn.grid(row=0, column=1, sticky="e")
+
+        # ---- Novel Selection ----
         ctk.CTkLabel(self.sidebar, text="Select Novel:").grid(
-            row=1, column=0, padx=20, pady=(10, 0), sticky="w"
+            row=5, column=0, columnspan=2, padx=20, pady=(10, 0), sticky="w"
         )
         self.novel_var = ctk.StringVar()
         self.novel_dropdown = ctk.CTkOptionMenu(
             self.sidebar, variable=self.novel_var, command=self.on_novel_change
         )
-        self.novel_dropdown.grid(row=2, column=0, padx=20, pady=(5, 10), sticky="ew")
+        self.novel_dropdown.grid(
+            row=6, column=0, columnspan=2, padx=20, pady=(5, 10), sticky="ew"
+        )
 
-        # Chapter Selection
+        # ---- Chapter Selection ----
         ctk.CTkLabel(self.sidebar, text="Start From Chapter:").grid(
-            row=3, column=0, padx=20, pady=(10, 0), sticky="w"
+            row=7, column=0, columnspan=2, padx=20, pady=(10, 0), sticky="w"
         )
         self.chapter_var = ctk.StringVar()
         self.chapter_dropdown = ctk.CTkOptionMenu(
             self.sidebar, variable=self.chapter_var
         )
-        self.chapter_dropdown.grid(row=4, column=0, padx=20, pady=(5, 10), sticky="ew")
+        self.chapter_dropdown.grid(
+            row=8, column=0, columnspan=2, padx=20, pady=(5, 10), sticky="ew"
+        )
 
-        # Action Buttons
+        # ---- Action Buttons ----
         self.start_btn = ctk.CTkButton(
             self.sidebar,
             text="▶ START PIPELINE",
@@ -110,7 +158,7 @@ class NovelApp(ctk.CTk):
             font=ctk.CTkFont(weight="bold"),
             command=self.start_processing,
         )
-        self.start_btn.grid(row=6, column=0, padx=20, pady=10, sticky="ew")
+        self.start_btn.grid(row=10, column=0, columnspan=2, padx=20, pady=10, sticky="ew")
 
         self.stop_btn = ctk.CTkButton(
             self.sidebar,
@@ -121,7 +169,9 @@ class NovelApp(ctk.CTk):
             state="disabled",
             command=self.stop_processing,
         )
-        self.stop_btn.grid(row=7, column=0, padx=20, pady=(0, 20), sticky="ew")
+        self.stop_btn.grid(
+            row=11, column=0, columnspan=2, padx=20, pady=(0, 20), sticky="ew"
+        )
 
         # ====================
         # 2. MAIN AREA (TABS)
@@ -136,7 +186,6 @@ class NovelApp(ctk.CTk):
         self.tab_logs.grid_columnconfigure(0, weight=1)
         self.tab_logs.grid_rowconfigure(0, weight=1)
 
-        # Upgraded to a proper monospaced terminal font with dark background
         self.log_textbox = ctk.CTkTextbox(
             self.tab_logs,
             font=("Ubuntu Mono", 13),
@@ -146,7 +195,6 @@ class NovelApp(ctk.CTk):
         self.log_textbox.grid(row=0, column=0, padx=10, pady=10, sticky="nsew")
         self.log_textbox.configure(state="disabled")
 
-        # Redirect standard outputs to BOTH Konsole and GUI
         sys.stdout = TextRedirector(self.log_textbox, original_stdout)
         sys.stderr = TextRedirector(self.log_textbox, original_stderr)
 
@@ -154,7 +202,6 @@ class NovelApp(ctk.CTk):
         self.tab_meta.grid_columnconfigure(1, weight=1)
         self.tab_meta.grid_columnconfigure(2, weight=0)
 
-        # Meta: Title
         ctk.CTkLabel(self.tab_meta, text="Book Title:").grid(
             row=0, column=0, padx=10, pady=10, sticky="e"
         )
@@ -165,7 +212,6 @@ class NovelApp(ctk.CTk):
             row=0, column=1, columnspan=2, padx=10, pady=10, sticky="ew"
         )
 
-        # Meta: Author
         ctk.CTkLabel(self.tab_meta, text="Author:").grid(
             row=1, column=0, padx=10, pady=10, sticky="e"
         )
@@ -174,7 +220,6 @@ class NovelApp(ctk.CTk):
             row=1, column=1, columnspan=2, padx=10, pady=10, sticky="ew"
         )
 
-        # Meta: Language
         ctk.CTkLabel(self.tab_meta, text="Language:").grid(
             row=2, column=0, padx=10, pady=10, sticky="e"
         )
@@ -184,7 +229,6 @@ class NovelApp(ctk.CTk):
             row=2, column=1, columnspan=2, padx=10, pady=10, sticky="ew"
         )
 
-        # Meta: Description
         ctk.CTkLabel(self.tab_meta, text="Description:").grid(
             row=3, column=0, padx=10, pady=10, sticky="ne"
         )
@@ -193,12 +237,10 @@ class NovelApp(ctk.CTk):
             row=3, column=1, columnspan=2, padx=10, pady=10, sticky="nsew"
         )
 
-        # Meta: Cover Image Path & Browser
         ctk.CTkLabel(self.tab_meta, text="Cover Image:").grid(
             row=4, column=0, padx=10, pady=10, sticky="e"
         )
 
-        # New: Manual Path Entry
         self.meta_cover_path = ctk.CTkEntry(
             self.tab_meta, placeholder_text="/home/user/Pictures/cover.jpg"
         )
@@ -211,7 +253,6 @@ class NovelApp(ctk.CTk):
         )
         self.btn_browse_cover.grid(row=4, column=2, padx=10, pady=10, sticky="w")
 
-        # Meta: Image Preview
         self.cover_preview = ctk.CTkLabel(
             self.tab_meta,
             text="No Cover Image",
@@ -224,7 +265,6 @@ class NovelApp(ctk.CTk):
             row=5, column=1, columnspan=2, padx=10, pady=10, sticky="w"
         )
 
-        # Meta: Save Button
         self.btn_save_meta = ctk.CTkButton(
             self.tab_meta,
             text="💾 Save Metadata",
@@ -238,12 +278,66 @@ class NovelApp(ctk.CTk):
 
         # Init
         self.load_novels()
+        self.refresh_models()  # Fetch models for the default backend on launch
 
     # ==========================
-    # LOGIC FUNCTIONS
+    # BACKEND & MODEL LOGIC
+    # ==========================
+    def on_backend_change(self, backend_name):
+        """Switch backend and refresh the model list."""
+        try:
+            set_backend(backend_name)
+        except ValueError as e:
+            print(f"[Error] {e}")
+            return
+        self.model_var.set("Loading...")
+        self.model_dropdown.configure(values=["Loading..."])
+        self.refresh_models()
+
+    def on_model_change(self, model_name):
+        """Set the active model when user picks from dropdown."""
+        if model_name and model_name not in (NO_MODELS_TEXT, "Loading..."):
+            set_llm_model(model_name)
+
+    def refresh_models(self):
+        """Fetch models from the active backend in a background thread."""
+        self.refresh_btn.configure(state="disabled", text="...")
+
+        def _fetch():
+            models, error = list_models()
+            # Schedule the UI update back on the main thread
+            self.after(0, self._apply_model_list, models, error)
+
+        threading.Thread(target=_fetch, daemon=True).start()
+
+    def _apply_model_list(self, models, error):
+        """Update the model dropdown on the main thread after fetching."""
+        self.refresh_btn.configure(state="normal", text="⟳")
+
+        if error:
+            print(f"[Backend] {error}")
+            self.model_dropdown.configure(values=[NO_MODELS_TEXT])
+            self.model_var.set(NO_MODELS_TEXT)
+            return
+
+        self.model_dropdown.configure(values=models)
+
+        # Try to keep the current selection if it exists in the new list
+        current = self.model_var.get()
+        if current in models:
+            self.model_var.set(current)
+            set_llm_model(current)
+        else:
+            # Auto-select the first model
+            self.model_var.set(models[0])
+            set_llm_model(models[0])
+
+        print(f"[Backend] Found {len(models)} model(s) on {get_backend_name()}")
+
+    # ==========================
+    # NOVEL / CHAPTER LOGIC
     # ==========================
     def load_novels(self):
-        """Finds all valid novel folders."""
         if not NOVELS_ROOT_DIR.exists():
             print(f"Error: {NOVELS_ROOT_DIR} not found.")
             return
@@ -262,8 +356,6 @@ class NovelApp(ctk.CTk):
             self.novel_var.set("No Novels Found")
 
     def on_novel_change(self, novel_name):
-        """Updates chapter list and loads metadata for the selected novel."""
-        # 1. Update Chapters
         raw_dir = NOVELS_ROOT_DIR / novel_name / "01_Raw_Text"
         if raw_dir.exists():
             files = sorted(raw_dir.glob("*.txt"))
@@ -279,20 +371,17 @@ class NovelApp(ctk.CTk):
                 self.chapter_dropdown.configure(values=["No Chapters"])
                 self.chapter_var.set("No Chapters")
 
-        # 2. Load Metadata
         self.load_metadata(novel_name)
 
     def load_metadata(self, novel_name):
-        """Populates the metadata tab with data from metadata.json."""
         novel_dir = NOVELS_ROOT_DIR / novel_name
         meta_file = novel_dir / "metadata.json"
 
-        # Clear existing fields
         self.meta_title.delete(0, "end")
         self.meta_author.delete(0, "end")
         self.meta_lang.delete(0, "end")
         self.meta_desc.delete("0.0", "end")
-        self.meta_cover_path.delete(0, "end")  # NEW
+        self.meta_cover_path.delete(0, "end")
         self.cover_preview.configure(image=None, text="No Cover Image")
         self.current_cover_path = None
 
@@ -308,15 +397,12 @@ class NovelApp(ctk.CTk):
                 if cover_filename:
                     cover_path = novel_dir / cover_filename
                     if cover_path.exists():
-                        self.meta_cover_path.insert(
-                            0, str(cover_path.absolute())
-                        )  # NEW
+                        self.meta_cover_path.insert(0, str(cover_path.absolute()))
                         self.display_cover_preview(cover_path)
             except Exception as e:
                 print(f"Error loading metadata: {e}")
 
     def browse_cover_image(self):
-        """Opens file dialog to select a cover image and fills the path entry."""
         file_path = filedialog.askopenfilename(
             title="Select Cover Image",
             filetypes=[("Image Files", "*.jpg *.jpeg *.png")],
@@ -327,9 +413,7 @@ class NovelApp(ctk.CTk):
             self.apply_cover_from_path()
 
     def apply_cover_from_path(self, event=None):
-        """Reads the path from the entry bar and loads the image."""
         path_str = self.meta_cover_path.get().strip()
-        # Remove accidental quotes if pasted from terminal
         path_str = path_str.replace('"', "").replace("'", "")
 
         if not path_str:
@@ -344,7 +428,6 @@ class NovelApp(ctk.CTk):
             self.current_cover_path = None
 
     def display_cover_preview(self, img_path):
-        """Renders the image into the GUI Label."""
         try:
             pil_image = Image.open(img_path)
             ctk_image = ctk.CTkImage(
@@ -356,7 +439,6 @@ class NovelApp(ctk.CTk):
             print(f"Error displaying image: {e}")
 
     def save_metadata(self):
-        """Saves text to JSON and copies the image to the novel folder."""
         novel_name = self.novel_var.get()
         if "No" in novel_name:
             return
@@ -364,9 +446,7 @@ class NovelApp(ctk.CTk):
         novel_dir = NOVELS_ROOT_DIR / novel_name
         cover_filename = ""
 
-        # Copy image if a new one was selected
         if self.current_cover_path and self.current_cover_path.exists():
-            # If the image isn't already in the novel dir, copy it there
             if self.current_cover_path.parent != novel_dir:
                 ext = self.current_cover_path.suffix
                 new_cover_path = novel_dir / f"cover{ext}"
@@ -376,7 +456,6 @@ class NovelApp(ctk.CTk):
             else:
                 cover_filename = self.current_cover_path.name
 
-        # Prepare JSON
         meta_data = {
             "title": self.meta_title.get(),
             "author": self.meta_author.get(),
@@ -385,7 +464,6 @@ class NovelApp(ctk.CTk):
             "cover_image": cover_filename,
         }
 
-        # Write to disk
         meta_file = novel_dir / "metadata.json"
         meta_file.write_text(
             json.dumps(meta_data, indent=4, ensure_ascii=False), encoding="utf-8"
@@ -404,7 +482,13 @@ class NovelApp(ctk.CTk):
     # PIPELINE THREADING
     # ==========================
     def start_processing(self):
-        self.tabview.set("Execution Logs")  # Auto-switch to logs
+        # Validate a real model is selected
+        current_model = self.model_var.get()
+        if current_model in (NO_MODELS_TEXT, "Loading...", ""):
+            print("[Error] No model selected. Select a model or hit ⟳ to refresh.")
+            return
+
+        self.tabview.set("Execution Logs")
         novel_name = self.novel_var.get()
         ch_str = self.chapter_var.get()
 
@@ -412,10 +496,14 @@ class NovelApp(ctk.CTk):
             return
         start_ch = int(ch_str.split(" ")[1])
 
+        # Lock all controls
         self.start_btn.configure(state="disabled")
         self.stop_btn.configure(state="normal")
         self.novel_dropdown.configure(state="disabled")
         self.chapter_dropdown.configure(state="disabled")
+        self.backend_dropdown.configure(state="disabled")
+        self.model_dropdown.configure(state="disabled")
+        self.refresh_btn.configure(state="disabled")
         self.stop_event.clear()
 
         novel_dir = NOVELS_ROOT_DIR / novel_name
@@ -426,8 +514,12 @@ class NovelApp(ctk.CTk):
 
     def run_ai(self, novel_dir, start_ch):
         try:
+            model_name = get_llm_model()
             print(
-                f"\n{'='*50}\nStarting pipeline for '{novel_dir.name}' at Chapter {start_ch}\n{'='*50}"
+                f"\n{'='*50}\n"
+                f"Starting pipeline for '{novel_dir.name}' at Chapter {start_ch}\n"
+                f"Backend: {get_backend_name()} | Model: {model_name}\n"
+                f"{'='*50}"
             )
             process_novel(novel_dir, start_ch, self.stop_event)
         except Exception as e:
@@ -438,10 +530,14 @@ class NovelApp(ctk.CTk):
             else:
                 print("\n[✓] PIPELINE COMPLETED SUCCESSFULLY.")
 
+            # Unlock all controls
             self.start_btn.configure(state="normal")
             self.stop_btn.configure(state="disabled")
             self.novel_dropdown.configure(state="normal")
             self.chapter_dropdown.configure(state="normal")
+            self.backend_dropdown.configure(state="normal")
+            self.model_dropdown.configure(state="normal")
+            self.refresh_btn.configure(state="normal")
 
     def stop_processing(self):
         print(

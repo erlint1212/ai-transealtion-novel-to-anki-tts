@@ -1,4 +1,4 @@
-import hashlib  # NEW
+import hashlib
 import random
 from pathlib import Path
 
@@ -15,13 +15,59 @@ def get_deterministic_id(text: str) -> int:
 
 # --- FILE PATHS & AI ---
 NOVELS_ROOT_DIR = Path("./Novels")
-LLM_MODEL = "qwen3.5:9b" #"qwen2.5:14b-instruct-q5_K_M"
 TTS_MODEL = "Qwen/Qwen3-TTS-12Hz-1.7B-CustomVoice"
 SPEAKER_VOICE = "Serena"
 TARGET_LANGUAGE = "English"
 
+# --- LLM BACKEND CONFIGURATION ---
+BACKENDS = {
+    "Ollama": {
+        "type": "ollama",
+    },
+    "LM Studio": {
+        "type": "openai",
+        "base_url": "http://localhost:1234/v1",
+        "api_key": "lm-studio",
+    },
+}
+
+# --- MUTABLE RUNTIME STATE ---
+_active_backend = "Ollama"
+_active_model = None  # Set after fetching models from the backend
+
+
+def get_backend():
+    return BACKENDS[_active_backend]
+
+
+def get_backend_name():
+    return _active_backend
+
+
+def set_backend(name: str):
+    global _active_backend, _active_model
+    if name not in BACKENDS:
+        raise ValueError(f"Unknown backend '{name}'. Choose from: {list(BACKENDS.keys())}")
+    _active_backend = name
+    _active_model = None  # Reset — user must pick a model for the new backend
+    console.print(f"[bold cyan][Config] LLM Backend set to: {name}[/bold cyan]")
+
+
+def get_llm_model():
+    if _active_model is None:
+        raise RuntimeError(
+            "No model selected. Choose a model before running the pipeline."
+        )
+    return _active_model
+
+
+def set_llm_model(model_name: str):
+    global _active_model
+    _active_model = model_name
+    console.print(f"[bold cyan][Config] LLM Model set to: {model_name}[/bold cyan]")
+
+
 # --- ANKI SETUP ---
-# We use a fixed string so the Model ID never changes.
 MODEL_ID = get_deterministic_id("NixOS_Chinese_Novel_Model_V1")
 
 ANKI_MODEL = genanki.Model(

@@ -21,6 +21,7 @@ in pkgs.mkShell {
     pkgs.xorg.libX11 
     pkgs.cudaPackages.cudatoolkit
     (pkgs.ollama.override { acceleration = "cuda"; })
+    pkgs.lmstudio
     ccLib
   ];
 

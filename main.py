@@ -8,14 +8,13 @@ from pathlib import Path
 
 import genanki
 import numpy as np
-import ollama
 import soundfile as sf
 import torch
 import transformers
 from qwen_tts import Qwen3TTSModel
 
 # Local Imports
-from config import ANKI_MODEL, LLM_MODEL, SPEAKER_VOICE, TTS_MODEL, get_deterministic_id
+from config import ANKI_MODEL, SPEAKER_VOICE, TTS_MODEL, get_deterministic_id, get_llm_model
 from exporters import build_final_epub
 from prompts import prompt_emotion, prompt_json, prompt_literal, prompt_natural
 from utils import (
@@ -27,7 +26,9 @@ from utils import (
     generate_pinyin,
     get_relevant_glossary,
     parse_numbered_output,
+    robust_parse,
     sanitize_filename,
+    unload_llm,
 )
 
 
@@ -44,7 +45,7 @@ def setup_directories(novel_dir):
         "metadata": novel_dir / "metadata.json",
     }
     for p in paths.values():
-        if p.suffix == "":  # If it's a folder, create it
+        if p.suffix == "":
             p.mkdir(exist_ok=True)
     return paths
 
@@ -58,7 +59,6 @@ def run_text_stage(chapter, paths, glossary, stop_event, redo_pinyin):
     chapter_cache_dir.mkdir(exist_ok=True)
     chapter_lines = []
 
-    # 1. Redo Pinyin Mode (Fast Path)
     if redo_pinyin and consolidated_json.exists():
         print(f"    [Pinyin] Re-generating Pinyin for {chapter.file_name}...")
         data = json.loads(consolidated_json.read_text(encoding="utf-8"))
@@ -68,16 +68,14 @@ def run_text_stage(chapter, paths, glossary, stop_event, redo_pinyin):
         consolidated_json.write_text(
             json.dumps(data, ensure_ascii=False, indent=4), encoding="utf-8"
         )
-        return data  # Return immediately
+        return data
 
-    # 2. Load Existing Full Translation
     if consolidated_json.exists():
         print(
             f"    - Full chapter loaded from visible directory: {consolidated_json.name}"
         )
         return json.loads(consolidated_json.read_text(encoding="utf-8"))
 
-    # 3. Process Chunks (The Heavy Lifting)
     chunks = chunk_text_into_numbered_lines(chapter.content)
     total_lines = sum(len(c) for c in chunks)
 
@@ -100,28 +98,20 @@ def run_text_stage(chapter, paths, glossary, stop_event, redo_pinyin):
             [f"{idx}. {text}" for idx, text in chunk_dict.items()]
         )
 
-        # --- UPDATED GLOSSARY LOGIC START ---
         try:
             res_json = call_llm(prompt_json(), numbered_input)
             json_str = res_json[res_json.find("{") : res_json.rfind("}") + 1]
             new_entities = json.loads(json_str)
 
             glossary_changed = False
-
-            # Iterate over all 4 categories: Characters, Places, Items, Skills
             target_categories = ["characters", "places", "items", "skills"]
 
             for cat in target_categories:
-                # Get the entities the LLM found for this category (default to empty dict if none)
                 found_entities = new_entities.get(cat, {})
-
                 for name, data in found_entities.items():
-                    # Strict Check: Only add if it doesn't exist in our Master Glossary
-                    # Note: We assume glossary[cat] exists because we initialize it in process_novel
                     if name not in glossary[cat]:
                         glossary[cat][name] = data
                         glossary_changed = True
-                        # print(f"    [Glossary] Discovered new {cat[:-1]}: {name}")
 
             if glossary_changed:
                 paths["glossary"].write_text(
@@ -129,18 +119,16 @@ def run_text_stage(chapter, paths, glossary, stop_event, redo_pinyin):
                 )
         except Exception:
             pass
-        # --- UPDATED GLOSSARY LOGIC END ---
 
-        # LLM Translations
         chunk_glossary = get_relevant_glossary(numbered_input, glossary)
-        nat = parse_numbered_output(
-            call_llm(prompt_natural(chunk_glossary), numbered_input), len(chunk_dict)
+        nat = robust_parse(
+            prompt_natural(chunk_glossary), numbered_input, len(chunk_dict), label="Natural"
         )
-        lit = parse_numbered_output(
-            call_llm(prompt_literal(chunk_glossary), numbered_input), len(chunk_dict)
+        lit = robust_parse(
+            prompt_literal(chunk_glossary), numbered_input, len(chunk_dict), label="Literal"
         )
-        emo = parse_numbered_output(
-            call_llm(prompt_emotion(), numbered_input), len(chunk_dict)
+        emo = robust_parse(
+            prompt_emotion(), numbered_input, len(chunk_dict), label="Emotion"
         )
 
         current_chunk_lines = []
@@ -148,7 +136,7 @@ def run_text_stage(chapter, paths, glossary, stop_event, redo_pinyin):
             current_chunk_lines.append(
                 {
                     "cn": text,
-                    "py": generate_pinyin(text),  # Local Pinyin
+                    "py": generate_pinyin(text),
                     "nat": nat.get(idx, ""),
                     "lit": lit.get(idx, ""),
                     "emo": emo.get(idx, "Calm narrative"),
@@ -160,7 +148,6 @@ def run_text_stage(chapter, paths, glossary, stop_event, redo_pinyin):
         )
         chapter_lines.extend(current_chunk_lines)
 
-    # 4. Cleanup and Save
     if not stop_event.is_set() and len(chapter_lines) == total_lines:
         print(
             f"\n    - Translation complete. Saving master JSON to: 02_Translated/{consolidated_json.name}"
@@ -179,13 +166,11 @@ def run_audio_stage(chapter, chapter_lines, novel_name, paths, stop_event, redo_
     print("\n--- STAGE 2: AUDIO & COMPILATION ---")
     transformers.logging.set_verbosity_error()
 
-    # VRAM Cleanup
     if not redo_pinyin:
         print("\n[SYSTEM] Unloading LLM to free VRAM for Audio...")
-        ollama.generate(model=LLM_MODEL, prompt="", keep_alive=0)
+        unload_llm()
         time.sleep(1)
 
-    # Setup Anki Deck
     safe_deck_title = sanitize_filename(novel_name).replace("_", " ")
     chapter_deck_id = get_deterministic_id(f"{novel_name}_Ch_{chapter.chapter_number}")
     chapter_deck = genanki.Deck(
@@ -211,13 +196,11 @@ def run_audio_stage(chapter, chapter_lines, novel_name, paths, stop_event, redo_
         audio_filename = f"ch{chapter.chapter_number:02d}_L{line_idx:04d}.opus"
         audio_path = chapter_media_dir / audio_filename
 
-        # Audio Logic
         skip_audio = audio_path.exists() and audio_path.stat().st_size > 1024
         if not skip_audio:
             audio_path.unlink(missing_ok=True)
 
         if not skip_audio and not redo_pinyin:
-            # Model Management
             if tts_model and audio_count > 0 and audio_count % 30 == 0:
                 print(f"[SYSTEM] Auto-reloading TTS model...")
                 del tts_model
@@ -234,7 +217,6 @@ def run_audio_stage(chapter, chapter_lines, novel_name, paths, stop_event, redo_
                     attn_implementation="sdpa",
                 )
 
-            # Generation
             raw_text = clean_for_tts(line["cn"]) or "标题"
             emo_tag = re.sub(
                 r"[^a-zA-Z0-9\s]", "", line.get("emo", "Calm narrative").strip()
@@ -254,7 +236,6 @@ def run_audio_stage(chapter, chapter_lines, novel_name, paths, stop_event, redo_
                     instruct=emo_tag,
                 )
 
-            # Save
             if torch.is_tensor(wavs[0]):
                 audio_t = wavs[0]
                 if (
@@ -281,10 +262,8 @@ def run_audio_stage(chapter, chapter_lines, novel_name, paths, stop_event, redo_
             torch.cuda.empty_cache()
             audio_count += 1
 
-        # Collect Results
         chapter_media_files.append(str(audio_path))
 
-        # Create Anki Note
         guid = genanki.guid_for(
             f"{novel_name}_Ch_{chapter.chapter_number:03d}_L{line_idx:04d}"
         )
@@ -302,7 +281,6 @@ def run_audio_stage(chapter, chapter_lines, novel_name, paths, stop_event, redo_
         )
         chapter_deck.add_note(note)
 
-        # Build HTML
         full_text_en += line["nat"] + "\n"
         epub_body += f"""
         <div class="study-block">
@@ -335,19 +313,16 @@ def run_export_stage(
 ):
     print(f"    [Export] Saving files for {chapter.file_name}...")
 
-    # 1. Update Master Lists
     all_chapter_decks.append(chapter_deck)
     for m in media_files:
         if m not in global_media_list:
             global_media_list.append(m)
 
-    # 2. Export Single Chapter Anki
     ch_apkg_path = paths["anki"] / f"Ch_{chapter.chapter_number:03d}.apkg"
     ch_package = genanki.Package(chapter_deck)
     ch_package.media_files = media_files
     ch_package.write_to_file(str(ch_apkg_path))
 
-    # 3. Save Text & XHTML
     (paths["trans"] / chapter.file_name).write_text(full_text, encoding="utf-8")
     xhtml_path = paths["epub"] / chapter.file_name.replace(".txt", ".xhtml")
     xhtml_path.write_text(
@@ -355,7 +330,6 @@ def run_export_stage(
         encoding="utf-8",
     )
 
-    # 4. Update Master Book Files
     meta = (
         json.loads(paths["metadata"].read_text(encoding="utf-8"))
         if paths["metadata"].exists()
@@ -381,13 +355,11 @@ def process_novel(
 ):
     paths = setup_directories(novel_dir)
 
-    # --- UPDATED GLOSSARY INITIALIZATION START ---
     default_glossary = {"characters": {}, "places": {}, "items": {}, "skills": {}}
 
     if paths["glossary"].exists():
         try:
             glossary = json.loads(paths["glossary"].read_text(encoding="utf-8"))
-            # Lazy Migration: Ensure new keys (items, skills) exist in old files
             for key in default_glossary:
                 if key not in glossary:
                     glossary[key] = {}
@@ -396,12 +368,10 @@ def process_novel(
             glossary = default_glossary
     else:
         glossary = default_glossary
-    # --- UPDATED GLOSSARY INITIALIZATION END ---
 
     all_chapter_decks = []
     global_media_list = []
 
-    # Load Chapters
     all_files = sorted(paths["raw"].glob("*.txt"))
     chapters = []
     for f in all_files:
@@ -418,28 +388,22 @@ def process_novel(
             break
         print(f"\n{'='*50}\n>>> PROCESSING: {chapter.file_name}\n{'='*50}")
 
-        # Verification Check
         json_path = paths["trans"] / chapter.file_name.replace(".txt", ".json")
         apkg_path = paths["anki"] / f"Ch_{chapter.chapter_number:03d}.apkg"
 
         if json_path.exists() and apkg_path.exists() and not redo_pinyin:
             pass
 
-        # --- EXECUTE PIPELINE ---
-
-        # 1. Text Stage
         lines = run_text_stage(chapter, paths, glossary, stop_event, redo_pinyin)
         if not lines or stop_event.is_set():
             continue
 
-        # 2. Audio Stage
         deck, media, text_en, html = run_audio_stage(
             chapter, lines, novel_dir.name, paths, stop_event, redo_pinyin
         )
         if stop_event.is_set():
             continue
 
-        # 3. Export Stage
         run_export_stage(
             chapter,
             deck,
