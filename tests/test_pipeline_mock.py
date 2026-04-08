@@ -56,11 +56,14 @@ class TestMockPipeline(unittest.TestCase):
         if self.test_root.exists():
             shutil.rmtree(self.test_root)
 
-    @patch("main.call_llm")        # 1. Mock the direct LLM call (glossary extraction)
-    @patch("main.robust_parse")    # 2. Mock the validated LLM calls (nat, lit, emo)
-    @patch("main.Qwen3TTSModel")   # 3. Mock the Heavy TTS Class
-    @patch("main.unload_llm")      # 4. Mock VRAM unload (replaces old main.ollama)
-    def test_full_pipeline_flow(self, mock_unload, mock_tts_class, mock_robust_parse, mock_call_llm):
+    @patch("main.call_llm")  # 1. Mock the direct LLM call (glossary extraction)
+    @patch("main.robust_parse")  # 2. Mock the validated LLM calls (nat, lit, emo)
+    @patch("main.Qwen3TTSModel")  # 3. Mock the Heavy TTS Class
+    @patch("main.unload_llm")  # 4. Mock VRAM unload
+    @patch("main.reload_llm")  # 5. Mock LLM reload
+    def test_full_pipeline_flow(
+        self, mock_reload, mock_unload, mock_tts_class, mock_robust_parse, mock_call_llm
+    ):
 
         # --- A. Setup LLM Mock Responses ---
         # call_llm is used once per chunk for glossary extraction
@@ -100,9 +103,10 @@ class TestMockPipeline(unittest.TestCase):
         self.assertTrue(len(list(media_dir.glob("*.opus"))) > 0, "Audio files missing")
 
         # Verify mocks were called correctly
-        mock_call_llm.assert_called_once()       # 1 glossary call
+        mock_call_llm.assert_called_once()  # 1 glossary call
         self.assertEqual(mock_robust_parse.call_count, 3)  # nat + lit + emo
-        mock_unload.assert_called_once()          # VRAM cleanup before TTS
+        mock_reload.assert_called_once()  # LLM reload before text gen
+        mock_unload.assert_called_once()  # VRAM cleanup before TTS
 
         print("\n Mock CI Pipeline Test Passed!")
 

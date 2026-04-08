@@ -32,6 +32,7 @@ from utils import (
     generate_pinyin,
     get_relevant_glossary,
     parse_numbered_output,
+    reload_llm,
     robust_parse,
     sanitize_filename,
     unload_llm,
@@ -81,6 +82,9 @@ def run_text_stage(chapter, paths, glossary, stop_event, redo_pinyin):
             f"    - Full chapter loaded from visible directory: {consolidated_json.name}"
         )
         return json.loads(consolidated_json.read_text(encoding="utf-8"))
+
+    # LLM needed — ensure it's loaded (may have been unloaded for TTS)
+    reload_llm()
 
     chunks = chunk_text_into_numbered_lines(chapter.content)
     total_lines = sum(len(c) for c in chunks)

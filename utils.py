@@ -54,7 +54,9 @@ def get_relevant_glossary(text: str, master_glossary: dict) -> dict:
     return relevant
 
 
+# =====================================================================
 # LLM BACKEND FUNCTIONS
+# =====================================================================
 
 
 def list_models() -> Tuple[List[str], str]:
@@ -196,7 +198,46 @@ def unload_llm():
             print(f"[SYSTEM] Warning: Could not unload model: {e}")
 
 
+def reload_llm():
+    """Reloads the LLM into the active backend before text generation."""
+    backend = get_backend()
+    model = get_llm_model()
+
+    if backend["type"] == "ollama":
+        # Ollama auto-loads on next request, nothing to do
+        return
+
+    elif backend["type"] == "openai":
+        import urllib.error
+        import urllib.request
+
+        base = backend["base_url"].replace("/v1", "")
+        url = f"{base}/api/v1/models/load"
+
+        print(f"[SYSTEM] Loading '{model}' into LM Studio...")
+        payload = json.dumps({"model": model}).encode("utf-8")
+        req = urllib.request.Request(
+            url,
+            data=payload,
+            headers={"Content-Type": "application/json"},
+            method="POST",
+        )
+        try:
+            with urllib.request.urlopen(req, timeout=120) as resp:
+                print(f"[SYSTEM] Model loaded successfully.")
+        except urllib.error.HTTPError as e:
+            body = e.read().decode(errors="replace")
+            if "already loaded" in body.lower():
+                print(f"[SYSTEM] Model already loaded.")
+            else:
+                print(f"[SYSTEM] Warning: Load returned {e.code}: {body}")
+        except Exception as e:
+            print(f"[SYSTEM] Warning: Could not load model: {e}")
+
+
+# =====================================================================
 # TEXT PROCESSING UTILITIES
+# =====================================================================
 
 
 def parse_numbered_output(llm_output: str, expected_count: int) -> Dict[int, str]:
